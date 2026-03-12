@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .database import Base
 
@@ -9,6 +9,19 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True)
     password = Column(String)
+    is_admin = Column(Integer, default=0)  # 0 = normal kullanıcı, 1 = admin
+
+
+class Profile(Base):
+    __tablename__ = "profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True)
+    full_name = Column(String, nullable=True)
+    university = Column(String, nullable=True)
+    department = Column(String, nullable=True)
+    class_year = Column(String, nullable=True)   # örn. "3", "4. sınıf"
+    cv_path = Column(String, nullable=True)     # yüklenen CV dosya yolu
 
 
 class Interview(Base):
@@ -69,3 +82,13 @@ class Feedback(Base):
     summary = Column(String, nullable=True)
     strengths = Column(String, nullable=True)
     improvements = Column(String, nullable=True)
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token = Column(String, unique=True, index=True, nullable=False)
+    expires_at = Column(DateTime, nullable=False, default=lambda: datetime.utcnow() + timedelta(hours=1))
+    used = Column(Integer, default=0)  # 0 = kullanılmadı, 1 = kullanıldı
