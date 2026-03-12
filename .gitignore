@@ -22,3 +22,30 @@ backend/test.db
 
 # Uploaded files (optional; remove if you want to track sample uploads)
 uploads/
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.so
+
+# DB (her geliştirici kendi test.db kullanır)
+*.db
+backend/test.db
+
+# Yüklenen dosyalar (CV vb.)
+backend/uploads/
+
+# macOS
+.DS_Store
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

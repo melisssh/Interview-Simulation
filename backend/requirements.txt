@@ -17,3 +17,7 @@ python-dotenv>=1.0.0
 faster-whisper>=1.0.0
 opencv-python
 mediapipe
+sqlalchemy
+passlib[bcrypt]
+email-validator
+bcrypt==3.2.2
