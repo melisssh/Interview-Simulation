@@ -1,8 +1,11 @@
 """
 Speech-to-text (STT) helpers.
 
-Uses OpenAI Whisper API when OPENAI_API_KEY is set and has quota.
-Otherwise falls back to local Whisper (faster-whisper). No API key or billing needed for local.
+Öncelik sırası:
+1. Groq (OpenAI uyumlu transcription API, hızlı) — GROQ_API_KEY
+2. OpenAI Whisper — OPENAI_API_KEY
+3. Yerel faster-whisper (API yok)
+4. Yedek dummy metin
 """
 
 import os
@@ -15,6 +18,7 @@ from typing import Optional, Tuple
 FALLBACK_NO_VIDEO = "no_video_path_or_file_missing"
 FALLBACK_FFMPEG = "ffmpeg_extract_failed"
 FALLBACK_WHISPER_API = "whisper_api_failed"
+FALLBACK_GROQ = "groq_whisper_failed"
 FALLBACK_LOCAL_WHISPER = "local_whisper_failed"
 
 # Local Whisper model (lazy-loaded). "tiny" = fastest, "base" = better quality.
@@ -69,6 +73,27 @@ def _extract_audio(video_path: str, out_path: str) -> bool:
         return Path(out_path).exists()
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
+
+
+def _transcribe_with_groq(audio_path: str) -> Tuple[Optional[str], Optional[str]]:
+    """Groq Whisper (OpenAI uyumlu endpoint)."""
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key or not api_key.strip():
+        return None, "GROQ_API_KEY empty"
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(
+            api_key=api_key.strip(),
+            base_url="https://api.groq.com/openai/v1",
+        )
+        model = os.environ.get("GROQ_WHISPER_MODEL", "whisper-large-v3")
+        with open(audio_path, "rb") as f:
+            resp = client.audio.transcriptions.create(model=model, file=f)
+        text = resp.text if hasattr(resp, "text") else str(resp)
+        return ((text.strip() if text else None), None)
+    except Exception as e:
+        return None, str(e)
 
 
 def _transcribe_with_whisper_api(audio_path: str) -> Tuple[Optional[str], Optional[str]]:
@@ -129,18 +154,31 @@ def get_transcript(
         if not _extract_audio(video_path, tmp_path):
             return DUMMY_TEXT, duration_seconds, FALLBACK_FFMPEG, None
 
-        # 1) Try OpenAI API if key is set
-        api_key = os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENAI_API_KEY").strip()
-        if api_key:
-            text, api_error = _transcribe_with_whisper_api(tmp_path)
+        err_detail: Optional[str] = None
+        groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+        if groq_key:
+            text, groq_err = _transcribe_with_groq(tmp_path)
             if text and text.strip():
                 return text.strip(), duration_seconds, None, None
+            err_detail = groq_err
 
-        # 2) Fallback: local Whisper (no API key or quota needed)
+        openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if openai_key:
+            text, openai_err = _transcribe_with_whisper_api(tmp_path)
+            if text and text.strip():
+                return text.strip(), duration_seconds, None, None
+            err_detail = openai_err
+
         text, local_error = _transcribe_with_local_whisper(tmp_path)
         if text and text.strip():
             return text.strip(), duration_seconds, None, None
-        return DUMMY_TEXT, duration_seconds, FALLBACK_LOCAL_WHISPER, local_error
+
+        reason = (
+            FALLBACK_GROQ
+            if groq_key
+            else (FALLBACK_WHISPER_API if openai_key else FALLBACK_LOCAL_WHISPER)
+        )
+        return DUMMY_TEXT, duration_seconds, reason, err_detail or local_error
     finally:
         if Path(tmp_path).exists():
             try:
