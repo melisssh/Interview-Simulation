@@ -42,8 +42,6 @@ export default function InterviewRun() {
   const [interviewEnded, setInterviewEnded] = useState(false)
   const isProcessingRef = useRef(false)
   const interviewEndedRef = useRef(false)
-  
-  // ... existing state definitions ...
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
@@ -93,7 +91,7 @@ export default function InterviewRun() {
     } catch (e) {
       console.error('WS send failed:', e)
     }
-  }, [isProcessing])
+  }, [])
 
   const connectWebSocket = useCallback(() => {
     const apiUrl = API.replace('/api', '').replace(/\/$/, '')
@@ -163,7 +161,7 @@ export default function InterviewRun() {
     ws.onclose = () => setWsConnected(false)
     ws.onerror = () => setError('WebSocket bağlantı hatası')
     wsRef.current = ws
-  }, [id, interview?.domain, interview?.language, stopAndUploadVideo])
+  }, [id, interview?.domain, interview?.language])
 
   const startAudioCapture = useCallback(() => {
     if (!streamRef.current) return
@@ -345,7 +343,7 @@ export default function InterviewRun() {
         </section>
 
         <section style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div style={{ background: '#fff', borderRadius: 12, padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem', border: '1px solid #e5e7eb' }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: '1rem', border: '1px solid #e5e7eb' }}>
             <div style={{
               width: 40, height: 40, borderRadius: '50%', background: '#0f172a', color: '#fff',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: '0.9rem',
