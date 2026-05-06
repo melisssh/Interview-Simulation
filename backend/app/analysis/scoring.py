@@ -17,7 +17,53 @@ def _normalize_word(word: str) -> str:
     return word.strip(".,!?;:()[]\"'").lower()
 
 
-def score_transcript(transcript: str, duration_seconds: Optional[int] = None) -> Dict[str, object]:
+def _build_text_feedback_tr(
+    total_words: int, filler_ratio: float, overall_score: int
+) -> tuple[str, str, str]:
+    if overall_score >= 80:
+        summary = "Yanıtınız güçlü ve akıcıydı."
+    elif overall_score >= 50:
+        summary = "Yanıtınız yeterliydi ancak bazı alanlarda gelişim var."
+    else:
+        summary = "Yanıtınızı yapı ve akıcılık açısından geliştirmeniz faydalı olur."
+
+    strengths_parts: list[str] = []
+    if total_words >= 80:
+        strengths_parts.append("Yanıtınız yeterince detaylı.")
+    if filler_ratio < 0.1:
+        strengths_parts.append(
+            "Dolgu kelime kullanımınız çok düşük; mesajınız net ve akıcı."
+        )
+    if not strengths_parts:
+        strengths_parts.append("Yanıtınız geliştirmek için iyi bir başlangıç.")
+    strengths = " ".join(strengths_parts)
+
+    improvements_parts: list[str] = []
+    if total_words < 80:
+        improvements_parts.append(
+            "Yanıtınızı biraz daha uzatın ve somut örnekler ekleyin."
+        )
+    if filler_ratio >= 0.2:
+        improvements_parts.append(
+            "Konuşurken “şey”, “yani” gibi dolgu kelimeleri azaltmaya çalışın."
+        )
+    if overall_score < 80:
+        improvements_parts.append(
+            "Yanıtlarınızı net bir giriş, gelişme ve sonuçla yapılandırmaya çalışın."
+        )
+    improvements = (
+        " ".join(improvements_parts)
+        if improvements_parts
+        else "Benzer şekilde yanıtlamaya devam edebilirsiniz; seviye yeterli."
+    )
+    return summary, strengths, improvements
+
+
+def score_transcript(
+    transcript: str,
+    duration_seconds: Optional[int] = None,
+    language: str = "tr",
+) -> Dict[str, object]:
     """
     Compute basic metrics, scores and textual feedback from a transcript.
 
@@ -60,15 +106,35 @@ def score_transcript(transcript: str, duration_seconds: Optional[int] = None) ->
     else:
         filler_score = int((1.0 - filler_ratio / 0.4) * 100)
 
-    overall_score = int((length_score + filler_score) / 2)
+    # Konuşma hızı (yaklaşık kelime/dk) ve duraksama hissi — basit sezgisel skorlar
+    speaking_rate_score = 70
+    if duration_seconds and duration_seconds > 5 and total_words > 0:
+        wpm = total_words / (duration_seconds / 60.0)
+        speaking_rate_score = int(max(0, min(100, 100 - abs(wpm - 120) * 0.45)))
+
+    pause_control_score = int(max(0, min(100, 100 - (filler_ratio / 0.35) * 100)))
+    if total_words == 0:
+        pause_control_score = 0
 
     scores = {
         "length": length_score,
         "filler_usage": filler_score,
-        "overall": overall_score,
+        "speaking_rate": speaking_rate_score,
+        "pause_control": pause_control_score,
+        "overall": int(
+            (length_score + filler_score + speaking_rate_score + pause_control_score) / 4
+        ),
     }
 
-    summary, strengths, improvements = _build_text_feedback(total_words, filler_ratio, overall_score)
+    lang = (language or "tr").lower()
+    if lang.startswith("en"):
+        summary, strengths, improvements = _build_text_feedback(
+            total_words, filler_ratio, scores["overall"]
+        )
+    else:
+        summary, strengths, improvements = _build_text_feedback_tr(
+            total_words, filler_ratio, scores["overall"]
+        )
 
     return {
         "metrics": metrics,

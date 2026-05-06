@@ -12,9 +12,9 @@ typing-inspection==0.4.2
 typing_extensions==4.15.0
 uvicorn==0.41.0
 PyJWT==2.10.1
-openai>=1.0.0
 python-dotenv>=1.0.0
 faster-whisper>=1.0.0
+ollama>=0.1.0
 opencv-python
 mediapipe
 sqlalchemy
@@ -24,4 +24,5 @@ email-validator
 bcrypt==3.2.2
 cryptography
 pypdf>=3.0.0
-google-generativeai>=0.8.0
+scipy
+sounddevice
