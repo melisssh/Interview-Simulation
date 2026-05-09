@@ -3,15 +3,143 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 
 const API = '/api'
 
+const ScoreBar = ({ score, label, max = 100 }) => {
+  const safeScore = Number.isFinite(Number(score)) ? Number(score) : 0
+  const percentage = (safeScore / max) * 100
+  let color = '#dc2626'
+  if (percentage >= 80) color = '#16a34a'
+  else if (percentage >= 60) color = '#f59e0b'
+
+  return (
+    <div style={{ marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+        <span style={{ fontSize: '0.9rem', fontWeight: 500 }}>{label}</span>
+        <span style={{ fontSize: '0.9rem', fontWeight: 600, color }}>{safeScore}/{max}</span>
+      </div>
+      <div style={{ width: '100%', height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{ width: `${percentage}%`, height: '100%', background: color, transition: 'width 0.3s' }} />
+      </div>
+    </div>
+  )
+}
+
 export default function InterviewResult() {
   const { id } = useParams()
   const [interview, setInterview] = useState(null)
+  const [analysis, setAnalysis] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState('')
-  const [chatMessage, setChatMessage] = useState('')
-  const [chatMessages, setChatMessages] = useState([])
   const navigate = useNavigate()
   const token = localStorage.getItem('token')
+  const toNumber = (value) => {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  const parseMetrics = (raw) => {
+    if (!raw) return {}
+    if (typeof raw === 'object') return raw
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw)
+        return parsed && typeof parsed === 'object' ? parsed : {}
+      } catch {
+        return {}
+      }
+    }
+    return {}
+  }
+  const pickMetrics = (...candidates) => {
+    for (const candidate of candidates) {
+      const parsed = parseMetrics(candidate)
+      if (parsed && Object.keys(parsed).length > 0) return parsed
+    }
+    return {}
+  }
+  const normalizedAnalysis = analysis || (interview?.feedback
+    ? {
+        metrics: parseMetrics(interview.feedback.metrics_json),
+        summary: interview.feedback.summary,
+        strengths: interview.feedback.strengths,
+        improvements: interview.feedback.improvements,
+      }
+    : null)
+  const pickScore = (...values) => {
+    for (const value of values) {
+      const n = toNumber(value)
+      if (n !== null) return n
+    }
+    return null
+  }
+  const averageScores = (...values) => {
+    const nums = values.map((v) => toNumber(v)).filter((v) => v !== null)
+    if (!nums.length) return null
+    return Math.round(nums.reduce((sum, n) => sum + n, 0) / nums.length)
+  }
+  const metricsScores = pickMetrics(
+    normalizedAnalysis?.metrics,
+    normalizedAnalysis?.metrics_json,
+    interview?.feedback?.metrics_json,
+  )
+  const metricsOverallScore = pickScore(
+    metricsScores.overall_score,
+    metricsScores.overall,
+  )
+  const metricsContentScore = averageScores(
+    metricsScores.content_score,
+    metricsScores.relevance_score,
+    metricsScores.keyword_match_score,
+    metricsScores.length,
+    metricsScores.filler_usage,
+  )
+  const metricsSpeechScore = averageScores(
+    metricsScores.speech_quality_score,
+    metricsScores.speech_score,
+    metricsScores.speaking_rate,
+    metricsScores.pause_control,
+    metricsScores.fluency_score,
+    metricsScores.speech_rate_score,
+  )
+  const derivedContentScore = pickScore(
+    normalizedAnalysis?.content_quality_score,
+    metricsScores.content_quality_score,
+    metricsScores.content_score,
+    metricsScores.relevance_score,
+    metricsScores.keyword_match_score,
+    metricsContentScore,
+    metricsOverallScore,
+  )
+  const derivedSpeechScore = pickScore(
+    normalizedAnalysis?.speech_quality_score,
+    metricsScores.speech_quality_score,
+    metricsScores.speech_score,
+    metricsSpeechScore,
+    metricsOverallScore,
+  )
+  const derivedNonverbalScore = pickScore(
+    normalizedAnalysis?.nonverbal_score,
+    metricsScores.nonverbal_score,
+    metricsScores.body_language_score,
+    metricsScores.eye_contact_score,
+    metricsScores.posture_score,
+    metricsOverallScore,
+  )
+  const derivedOverallScore = pickScore(
+    normalizedAnalysis?.overall_score,
+    metricsOverallScore,
+    (derivedContentScore !== null && derivedSpeechScore !== null && derivedNonverbalScore !== null)
+      ? Math.round((derivedContentScore + derivedSpeechScore + derivedNonverbalScore) / 3)
+      : null,
+    derivedContentScore,
+  ) ?? 0
+  const strengthsList = normalizedAnalysis?.metrics?.strengths
+    || (normalizedAnalysis?.strengths ? normalizedAnalysis.strengths.split('\n').map((s) => s.trim()).filter(Boolean) : [])
+  const improvementsList = normalizedAnalysis?.metrics?.improvements
+    || (normalizedAnalysis?.improvements ? normalizedAnalysis.improvements.split('\n').map((s) => s.trim()).filter(Boolean) : [])
+  const contentFeedback = normalizedAnalysis?.metrics?.content_feedback
+    || normalizedAnalysis?.actionable_recommendations
+    || normalizedAnalysis?.summary
+    || ''
 
   useEffect(() => {
     if (!token) {
@@ -19,6 +147,7 @@ export default function InterviewResult() {
       return
     }
     if (!id) return
+<<<<<<< Updated upstream
     fetch(`${API}/interviews/${id}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -35,32 +164,112 @@ export default function InterviewResult() {
             ...(data.feedback.strengths ? [{ role: 'system', text: '💪 Güçlü yönler: ' + data.feedback.strengths }] : []),
             ...(data.feedback.improvements ? [{ role: 'system', text: '📈 Gelişim: ' + data.feedback.improvements }] : []),
           ])
+=======
+
+    const fetchInterviewAndAnalysis = async () => {
+      try {
+        const interviewRes = await fetch(`${API}/interviews/${id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (interviewRes.status === 401 || interviewRes.status === 403) {
+          navigate('/login')
+          return
         }
-      })
-      .catch(() => setError('Yüklenemedi'))
-      .finally(() => setLoading(false))
+        if (!interviewRes.ok) throw new Error('Mülakat alınamadı')
+        const interviewData = await interviewRes.json()
+        if (!interviewData) return
+
+        if (interviewData.status === 'created' || interviewData.status === 'in_progress') {
+          navigate(`/interview/${id}`)
+          return
+        }
+
+        setInterview(interviewData)
+
+        const analysisRes = await fetch(`${API}/interviews/${id}/analysis`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (analysisRes.status === 404) {
+          setAnalysis(null)
+          return
+>>>>>>> Stashed changes
+        }
+        if (!analysisRes.ok) throw new Error('Analiz alınamadı')
+        const analysisData = await analysisRes.json()
+        setAnalysis(analysisData)
+      } catch (err) {
+        setError(err.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchInterviewAndAnalysis()
   }, [id, token, navigate])
 
-  async function handleSendChat(e) {
-    e.preventDefault()
-    if (!chatMessage.trim()) return
-    const userText = chatMessage.trim()
-    setChatMessage('')
-    setChatMessages((prev) => [...prev, { role: 'user', text: userText }])
+  useEffect(() => {
+    if (!token || !id || !interview) return
+    if (analysis) return
+    if (interview.status !== 'analyzing') return
+
+    const pollTimer = setInterval(async () => {
+      try {
+        const [interviewRes, analysisRes] = await Promise.all([
+          fetch(`${API}/interviews/${id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(`${API}/interviews/${id}/analysis`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ])
+
+        if (interviewRes.ok) {
+          const interviewData = await interviewRes.json()
+          setInterview(interviewData)
+        }
+
+        if (analysisRes.ok) {
+          const analysisData = await analysisRes.json()
+          setAnalysis(analysisData)
+        }
+      } catch {
+        // polling errors are temporary; keep current UI state
+      }
+    }, 4000)
+
+    return () => clearInterval(pollTimer)
+  }, [id, token, interview, analysis])
+
+  const startAnalysis = async () => {
+    setAnalyzing(true)
+    setError('')
+    setInterview((prev) => (prev ? { ...prev, status: 'analyzing' } : prev))
     try {
-      const res = await fetch(`${API}/interviews/${id}/chat`, {
+      const res = await fetch(`${API}/interviews/${id}/analyze`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ message: userText }),
+        headers: { Authorization: `Bearer ${token}` },
       })
       const data = await res.json()
-      const reply = res.ok ? (data.reply || 'Yanıt alınamadı.') : (data.detail || 'Bir hata oluştu.')
-      setChatMessages((prev) => [...prev, { role: 'system', text: reply }])
-    } catch {
-      setChatMessages((prev) => [...prev, { role: 'system', text: 'Bağlantı hatası. Tekrar deneyin.' }])
+      if (res.ok) {
+        const analysisRes = await fetch(`${API}/interviews/${id}/analysis`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (analysisRes.ok) {
+          const analysisData = await analysisRes.json()
+          setAnalysis(analysisData)
+        } else {
+          setAnalysis(null)
+        }
+        setInterview((prev) => (prev ? { ...prev, status: 'analyzed' } : prev))
+      } else {
+        setError(data.detail || 'Analiz başlatılamadı')
+        setInterview((prev) => (prev ? { ...prev, status: 'analysis_failed' } : prev))
+      }
+    } catch (err) {
+      setError('Analiz hatası: ' + err.message)
+      setInterview((prev) => (prev ? { ...prev, status: 'analysis_failed' } : prev))
+    } finally {
+      setAnalyzing(false)
     }
   }
 
@@ -73,35 +282,75 @@ export default function InterviewResult() {
     justifyContent: 'space-between',
   }
 
-  if (!token) return null
-  if (loading) return (
-    <div style={{ minHeight: '100vh', background: '#fff' }}>
-      <header style={headerStyle}>
-        <Link to="/dashboard" style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111', textDecoration: 'none' }}>
-          Mülakat Simülasyonu
-        </Link>
-        <Link to="/dashboard" style={{ fontSize: '0.95rem', color: '#374151', textDecoration: 'none' }}>
-          Dashboard'a dön
-        </Link>
-      </header>
-      <div style={{ padding: '3rem 1.5rem', textAlign: 'center', color: '#6b7280' }}>Yükleniyor...</div>
-    </div>
-  )
-  if (error || !interview) return (
-    <div style={{ minHeight: '100vh', background: '#fff' }}>
-      <header style={headerStyle}>
-        <Link to="/dashboard" style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111', textDecoration: 'none' }}>
-          Mülakat Simülasyonu
-        </Link>
-        <Link to="/dashboard" style={{ fontSize: '0.95rem', color: '#374151', textDecoration: 'none' }}>
-          Dashboard'a dön
-        </Link>
-      </header>
-      <div style={{ padding: '3rem 1.5rem', color: '#dc2626', textAlign: 'center' }}>{error || 'Bulunamadı'}</div>
-    </div>
-  )
+  const cardStyle = {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 12,
+    padding: '1.5rem',
+    marginBottom: '1.5rem',
+  }
 
-  const hasFeedback = interview.feedback && (interview.feedback.summary || interview.feedback.strengths || interview.feedback.improvements)
+  if (!token) return null
+  if (loading)
+    return (
+      <div style={{ minHeight: '100vh', background: '#fff' }}>
+        <header style={headerStyle}>
+          <Link to="/dashboard" style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111', textDecoration: 'none' }}>
+            Mülakat Simülasyonu
+          </Link>
+          <Link to="/dashboard" style={{ fontSize: '0.95rem', color: '#374151', textDecoration: 'none' }}>
+            Dashboard'a dön
+          </Link>
+        </header>
+        <div style={{ padding: '3rem 1.5rem', textAlign: 'center', color: '#6b7280' }}>Yükleniyor...</div>
+      </div>
+    )
+
+  if (error && !analysis)
+    return (
+      <div style={{ minHeight: '100vh', background: '#fff' }}>
+        <header style={headerStyle}>
+          <Link to="/dashboard" style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111', textDecoration: 'none' }}>
+            Mülakat Simülasyonu
+          </Link>
+          <Link to="/dashboard" style={{ fontSize: '0.95rem', color: '#374151', textDecoration: 'none' }}>
+            Dashboard'a dön
+          </Link>
+        </header>
+        <div style={{ maxWidth: 800, margin: '0 auto', padding: '3rem 1.5rem' }}>
+          <div style={{ ...cardStyle, background: '#fee' }}>
+            <h2 style={{ color: '#dc2626', marginTop: 0 }}>Hata</h2>
+            <p>{error}</p>
+            <button
+              onClick={() => navigate('/dashboard')}
+              style={{
+                padding: '0.75rem 1.5rem',
+                background: '#111',
+                color: '#fff',
+                borderRadius: 8,
+                border: 'none',
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+            >
+              Dashboard'a dön
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+
+  if (!interview)
+    return (
+      <div style={{ minHeight: '100vh', background: '#fff' }}>
+        <header style={headerStyle}>
+          <Link to="/dashboard" style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111', textDecoration: 'none' }}>
+            Mülakat Simülasyonu
+          </Link>
+        </header>
+        <div style={{ padding: '3rem 1.5rem', color: '#dc2626', textAlign: 'center' }}>Bulunamadı</div>
+      </div>
+    )
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5' }}>
@@ -113,96 +362,184 @@ export default function InterviewResult() {
           Dashboard'a dön
         </Link>
       </header>
-      <div style={{ maxWidth: 640, margin: '0 auto', padding: '3rem 1.5rem', background: '#fff', minHeight: 'calc(100vh - 57px)', boxSizing: 'border-box' }}>
-        <h1 style={{ fontSize: '2rem', fontWeight: 700, color: '#111', marginBottom: '0.5rem', lineHeight: 1.2 }}>
-          {interview.title} – Sonuç
+
+      <div style={{ maxWidth: 1000, margin: '0 auto', padding: '2rem 1.5rem' }}>
+        <h1 style={{ fontSize: '2rem', fontWeight: 700, color: '#111', marginBottom: '0.5rem' }}>
+          {interview.title} – Sonuçlar
         </h1>
-        <p style={{ fontSize: '1rem', color: '#6b7280', marginBottom: '1.5rem', lineHeight: 1.5 }}>Analiz ve geri bildirim</p>
+        <p style={{ fontSize: '1rem', color: '#6b7280', marginBottom: '2rem' }}>Analiz ve geri bildirim</p>
 
-      <section style={{ marginBottom: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>Konuşma metni</h2>
-        {interview.transcript ? (
-          <div style={{ background: '#f5f5f5', padding: '1rem', borderRadius: 8, whiteSpace: 'pre-wrap', fontSize: '0.95rem' }}>
-            {interview.transcript}
-          </div>
-        ) : (
-          <p style={{ color: '#888', margin: 0, fontStyle: 'italic' }}>Analiz bekleniyor. Video yüklenip işlendikten sonra burada görünecek.</p>
-        )}
-      </section>
-
-      <section style={{ marginBottom: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>Geri bildirim</h2>
-        {hasFeedback ? (
-          <div style={{ background: '#e8f5e9', padding: '1rem', borderRadius: 8, border: '1px solid #c8e6c9' }}>
-            {interview.feedback.summary && <p style={{ margin: '0 0 0.5rem 0' }}><strong>Özet:</strong> {interview.feedback.summary}</p>}
-            {interview.feedback.strengths && <p style={{ margin: '0 0 0.5rem 0' }}><strong>Güçlü yönler:</strong> {interview.feedback.strengths}</p>}
-            {interview.feedback.improvements && <p style={{ margin: 0 }}><strong>Gelişim:</strong> {interview.feedback.improvements}</p>}
-            {interview.feedback.scores_json && (
-              <p style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: '#555' }}>
-                Skorlar: {typeof interview.feedback.scores_json === 'string' ? interview.feedback.scores_json : JSON.stringify(interview.feedback.scores_json)}
-              </p>
+        {!normalizedAnalysis ? (
+          <div style={cardStyle}>
+            {interview.status === 'analyzing' || analyzing ? (
+              <p style={{ margin: 0, color: '#666' }}>Analiz işleniyor... Birkaç saniye içinde sonuçlar otomatik yenilenecek.</p>
+            ) : (
+              <>
+                <p style={{ margin: '0 0 1rem 0', color: '#666' }}>
+                  {interview.status === 'analysis_failed'
+                    ? 'Analiz sırasında hata oluştu. Tekrar deneyebilirsin.'
+                    : 'Analiz henüz hazır değil. Başlatmak için butona tıkla.'}
+                </p>
+                <button
+                  onClick={startAnalysis}
+                  disabled={analyzing}
+                  style={{
+                    padding: '0.75rem 1.5rem',
+                    background: analyzing ? '#ccc' : '#111',
+                    color: '#fff',
+                    borderRadius: 8,
+                    border: 'none',
+                    fontWeight: 500,
+                    cursor: analyzing ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {interview.status === 'analysis_failed' ? 'Analizi Tekrar Dene' : 'Analizi Başlat'}
+                </button>
+              </>
             )}
           </div>
         ) : (
-          <p style={{ color: '#888', margin: 0, fontStyle: 'italic' }}>Analiz bekleniyor. Geri bildirim hazır olduğunda burada görünecek.</p>
-        )}
-      </section>
+          <>
+            {/* Overall Score */}
+            <div style={cardStyle}>
+              <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+                <div
+                  style={{
+                    fontSize: '3rem',
+                    fontWeight: 700,
+                    color: derivedOverallScore >= 80 ? '#16a34a' : derivedOverallScore >= 60 ? '#f59e0b' : '#dc2626',
+                  }}
+                >
+                  {derivedOverallScore}
+                </div>
+                <p style={{ fontSize: '1.1rem', color: '#666', margin: '0.5rem 0 0 0' }}>
+                  {derivedOverallScore >= 80
+                    ? '🌟 Mükemmel'
+                    : derivedOverallScore >= 70
+                    ? '👍 İyi'
+                    : derivedOverallScore >= 60
+                    ? '⚠️ Orta'
+                    : '❌ Gelişim gerekli'}
+                </p>
+              </div>
 
-      <section style={{ borderTop: '1px solid #eee', paddingTop: '1rem' }}>
-        <h2 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>Sohbet</h2>
-        <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '0.75rem' }}>
-          Geri bildirime dayalı sorularınızı yazın (örn. &quot;Bu konuda nasıl gelişebilirim?&quot;).
-        </p>
-        <div style={{ background: '#fafafa', border: '1px solid #eee', borderRadius: 8, padding: '0.75rem', minHeight: 120 }}>
-          {chatMessages.map((m, i) => (
+              <h3 style={{ marginTop: '1.5rem', marginBottom: '1rem' }}>Skor Dağılımı</h3>
+              <ScoreBar score={derivedContentScore ?? 0} label="📝 İçerik Kalitesi (Primary)" />
+              <ScoreBar score={derivedSpeechScore ?? 0} label="🎤 Konuşma Kalitesi" />
+              <ScoreBar score={derivedNonverbalScore ?? 0} label="👁️ Beden Dili" />
+            </div>
+
+            {/* Strengths & Improvements */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+              <div style={cardStyle}>
+                <h3 style={{ marginTop: 0, color: '#16a34a' }}>✅ Güçlü Yönler</h3>
+                <ul style={{ margin: 0, paddingLeft: '1.5rem', color: '#666' }}>
+                  {strengthsList.length ? (
+                    strengthsList.map((strength, i) => (
+                      <li key={i} style={{ marginBottom: '0.5rem' }}>
+                        {strength}
+                      </li>
+                    ))
+                  ) : (
+                    <li>Güçlü yön verisi bulunamadı</li>
+                  )}
+                </ul>
+              </div>
+
+              <div style={cardStyle}>
+                <h3 style={{ marginTop: 0, color: '#f59e0b' }}>📈 Gelişim Alanları</h3>
+                <ul style={{ margin: 0, paddingLeft: '1.5rem', color: '#666' }}>
+                  {improvementsList.length ? (
+                    improvementsList.map((improvement, i) => (
+                      <li key={i} style={{ marginBottom: '0.5rem' }}>
+                        {improvement}
+                      </li>
+                    ))
+                  ) : (
+                    <li>Gelişim alanı verisi bulunamadı</li>
+                  )}
+                </ul>
+              </div>
+            </div>
+
+            {/* Detailed Feedback */}
+            <div style={cardStyle}>
+              <h3 style={{ marginTop: 0 }}>📋 Detaylı Geri Bildirim</h3>
+
+              <div style={{ marginBottom: '1.5rem' }}>
+                <h4 style={{ color: '#374151', marginBottom: '0.5rem' }}>İçerik Kalitesi</h4>
+                <p style={{ color: '#666', margin: 0, whiteSpace: 'pre-wrap' }}>
+                  {contentFeedback || 'İçerik geri bildirimi bulunamadı'}
+                </p>
+              </div>
+
+              {normalizedAnalysis.strengths && (
+                <div style={{ marginBottom: '1.5rem', padding: '1rem', background: '#e8f5e9', borderRadius: 8 }}>
+                  <h4 style={{ marginTop: 0, color: '#16a34a' }}>💪 Özet</h4>
+                  <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{normalizedAnalysis.strengths}</p>
+                </div>
+              )}
+
+              {normalizedAnalysis.improvements && (
+                <div style={{ padding: '1rem', background: '#fff3e0', borderRadius: 8 }}>
+                  <h4 style={{ marginTop: 0, color: '#f59e0b' }}>🎯 Öneriler</h4>
+                  <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{normalizedAnalysis.improvements}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Recommendation */}
             <div
-              key={i}
               style={{
-                marginBottom: '0.5rem',
-                padding: '0.5rem 0.75rem',
-                borderRadius: 8,
-                background: m.role === 'user' ? '#e3f2fd' : '#fff',
-                marginLeft: m.role === 'user' ? '2rem' : 0,
-                marginRight: m.role === 'user' ? 0 : '2rem',
+                ...cardStyle,
+                background:
+                  normalizedAnalysis.overall_recommendation === 'Strong Yes'
+                    ? '#e8f5e9'
+                    : normalizedAnalysis.overall_recommendation === 'Yes'
+                    ? '#e3f2fd'
+                    : normalizedAnalysis.overall_recommendation === 'Maybe'
+                    ? '#fff3e0'
+                    : '#fee',
+                border:
+                  normalizedAnalysis.overall_recommendation === 'Strong Yes'
+                    ? '2px solid #16a34a'
+                    : normalizedAnalysis.overall_recommendation === 'Yes'
+                    ? '2px solid #2196f3'
+                    : normalizedAnalysis.overall_recommendation === 'Maybe'
+                    ? '2px solid #f59e0b'
+                    : '2px solid #dc2626',
               }}
             >
-              {m.role === 'user' && <span style={{ fontSize: '0.85rem', color: '#666' }}>Siz: </span>}
-              {m.text}
+              <h3 style={{ marginTop: 0 }}>📊 Değerlendirme Özeti</h3>
+              <p style={{ margin: '0 0 1rem 0', color: '#666' }}>
+                <strong>Teknik Yeterlilik:</strong> {normalizedAnalysis.technical_fit || 'Bilinmiyor'}
+              </p>
+              <p style={{ margin: '0 0 1rem 0', color: '#666' }}>
+                <strong>Komunikasyon:</strong> {normalizedAnalysis.communication_fit || 'Bilinmiyor'}
+              </p>
+              <p style={{ margin: '0 0 1.5rem 0', color: '#666' }}>
+                <strong>Motivasyon:</strong> {normalizedAnalysis.motivation_level || 'Bilinmiyor'}
+              </p>
+              <p style={{ fontSize: '1.1rem', fontWeight: 600, margin: 0 }}>
+                Genel Tavsiye:{' '}
+                <span
+                  style={{
+                    color:
+                      normalizedAnalysis.overall_recommendation === 'Strong Yes'
+                        ? '#16a34a'
+                        : normalizedAnalysis.overall_recommendation === 'Yes'
+                        ? '#2196f3'
+                        : normalizedAnalysis.overall_recommendation === 'Maybe'
+                        ? '#f59e0b'
+                        : '#dc2626',
+                  }}
+                >
+                  {normalizedAnalysis.overall_recommendation || 'Bilinmiyor'}
+                </span>
+              </p>
             </div>
-          ))}
-        </div>
-        <form onSubmit={handleSendChat} style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-          <input
-            type="text"
-            value={chatMessage}
-            onChange={(e) => setChatMessage(e.target.value)}
-            placeholder="Mesajınızı yazın..."
-            style={{
-              flex: 1,
-              padding: '0.75rem 1rem',
-              fontSize: '1rem',
-              border: '1px solid #e5e7eb',
-              borderRadius: 8,
-              color: '#111',
-            }}
-          />
-          <button
-            type="submit"
-            style={{
-              padding: '0.75rem 1.5rem',
-              background: '#111',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 8,
-              fontWeight: 500,
-              fontSize: '1rem',
-              cursor: 'pointer',
-            }}
-          >
-            Gönder
-          </button>
-        </form>
-      </section>
+          </>
+        )}
       </div>
     </div>
   )

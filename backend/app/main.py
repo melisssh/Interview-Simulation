@@ -29,7 +29,11 @@ from passlib.context import CryptContext
 
 from .database import engine, SessionLocal
 from . import models
+<<<<<<< Updated upstream
 from .analysis import stt, scoring, video_features
+=======
+from .routers import auth, interviews, websocket, analysis
+>>>>>>> Stashed changes
 
 # JWT ayarları (üretimde env'den alınmalı)
 SECRET_KEY = "sizin-gizli-anahtar-buraya-degisitirin"
@@ -65,6 +69,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def hash_password(password: str):
     return pwd_context.hash(password)
 
+<<<<<<< Updated upstream
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -75,6 +80,12 @@ def get_db():
         yield db
     finally:
         db.close()
+=======
+app.include_router(auth.router, tags=["auth"])
+app.include_router(interviews.router, tags=["interviews"])
+app.include_router(websocket.router, tags=["websocket"])
+app.include_router(analysis.router, tags=["analysis"])
+>>>>>>> Stashed changes
 
 
 def create_access_token(data: dict):

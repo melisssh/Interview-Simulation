@@ -19,7 +19,7 @@ FALLBACK_LOCAL_WHISPER = "local_whisper_failed"
 
 # Local Whisper model (lazy-loaded). "tiny" = fastest, "base" = better quality.
 _LOCAL_WHISPER_MODEL = None
-LOCAL_WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "base")
+LOCAL_WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "tiny")  # tiny = çok hızlı ⚡
 
 DUMMY_TEXT = (
     "This is a dummy transcript used to exercise the analysis "
@@ -96,10 +96,15 @@ def _transcribe_with_local_whisper(audio_path: str) -> Tuple[Optional[str], Opti
     try:
         from faster_whisper import WhisperModel
         if _LOCAL_WHISPER_MODEL is None:
+            # MacBook Metal GPU acceleration
+            device = os.environ.get("WHISPER_DEVICE", "cpu")  # "metal" or "cpu"
+            # Metal device ise float32, CPU ise int8 quantization
+            compute_type = "float32" if device == "metal" else "int8"
+
             _LOCAL_WHISPER_MODEL = WhisperModel(
                 LOCAL_WHISPER_MODEL_SIZE,
-                device="cpu",
-                compute_type="int8",
+                device=device,
+                compute_type=compute_type,
             )
         segments, _ = _LOCAL_WHISPER_MODEL.transcribe(audio_path)
         parts = [s.text for s in segments if s.text]

@@ -11,13 +11,84 @@ from typing import Dict, Optional
 
 
 FILLER_WORDS_TR = ["sey", "yani", "ii", "eee", "hmm", "aslinda"]
+FILLER_WORDS_EN = ["um", "uh", "like", "you know", "basically", "actually", "literally"]
 
 
 def _normalize_word(word: str) -> str:
     return word.strip(".,!?;:()[]\"'").lower()
 
 
+<<<<<<< Updated upstream
 def score_transcript(transcript: str, duration_seconds: Optional[int] = None) -> Dict[str, object]:
+=======
+def _build_text_feedback_tr(
+    total_words: int, filler_ratio: float, overall_score: int
+) -> tuple[str, str, str]:
+    if overall_score >= 80:
+        summary = "Yanıtınız güçlü ve akıcıydı."
+    elif overall_score >= 50:
+        summary = "Yanıtınız yeterliydi ancak bazı alanlarda gelişim var."
+    else:
+        summary = "Yanıtınızı yapı ve akıcılık açısından geliştirmeniz faydalı olur."
+
+    strengths_parts: list[str] = []
+    if total_words >= 80:
+        strengths_parts.append("Yanıtınız yeterince detaylı.")
+    if filler_ratio < 0.1:
+        strengths_parts.append(
+            "Dolgu kelime kullanımınız çok düşük; mesajınız net ve akıcı."
+        )
+    if not strengths_parts:
+        strengths_parts.append("Yanıtınız geliştirmek için iyi bir başlangıç.")
+    strengths = " ".join(strengths_parts)
+
+    improvements_parts: list[str] = []
+    if total_words < 80:
+        improvements_parts.append(
+            "Yanıtınızı biraz daha uzatın ve somut örnekler ekleyin."
+        )
+    if filler_ratio >= 0.2:
+        improvements_parts.append(
+            "Konuşurken “şey”, “yani” gibi dolgu kelimeleri azaltmaya çalışın."
+        )
+    if overall_score < 80:
+        improvements_parts.append(
+            "Yanıtlarınızı net bir giriş, gelişme ve sonuçla yapılandırmaya çalışın."
+        )
+    improvements = (
+        " ".join(improvements_parts)
+        if improvements_parts
+        else "Benzer şekilde yanıtlamaya devam edebilirsiniz; seviye yeterli."
+    )
+    return summary, strengths, improvements
+
+
+def pause_control_from_answer_text(text: str, language: str = "tr") -> int:
+    """
+    0–100 pause / fluency proxy from a single answer transcript (filler density).
+    Mirrors score_transcript pause_control for one snippet.
+    """
+    words = [_normalize_word(w) for w in (text or "").split() if _normalize_word(w)]
+    total_words = len(words)
+    if total_words == 0:
+        return 45
+    lang = (language or "tr").lower()
+    if lang.startswith("en"):
+        filler_count = sum(1 for w in words if w in FILLER_WORDS_EN)
+    else:
+        filler_count = sum(1 for w in words if w in FILLER_WORDS_TR)
+    filler_ratio = filler_count / total_words if total_words else 0.0
+    if filler_ratio >= 0.4:
+        return 0
+    return int(max(0, min(100, 100 - (filler_ratio / 0.35) * 100)))
+
+
+def score_transcript(
+    transcript: str,
+    duration_seconds: Optional[int] = None,
+    language: str = "tr",
+) -> Dict[str, object]:
+>>>>>>> Stashed changes
     """
     Compute basic metrics, scores and textual feedback from a transcript.
 
