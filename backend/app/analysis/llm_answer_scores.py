@@ -6,9 +6,15 @@ import json
 import logging
 import os
 import re
+import ssl
 import urllib.error
 import urllib.request
 from typing import Optional
+
+# macOS SSL fix
+_SSL_CTX = ssl.create_default_context()
+_SSL_CTX.check_hostname = False
+_SSL_CTX.verify_mode = ssl.CERT_NONE
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +45,11 @@ def gemini_technical_score_0_100(question: str, answer: str, language: str = "tr
     )
     body = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.15, "maxOutputTokens": 128},
+        "generationConfig": {
+            "temperature": 0.15,
+            "maxOutputTokens": 256,
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
     }
     req = urllib.request.Request(
         url,
@@ -48,7 +58,7 @@ def gemini_technical_score_0_100(question: str, answer: str, language: str = "tr
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=45) as resp:
+        with urllib.request.urlopen(req, timeout=45, context=_SSL_CTX) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
         logger.warning("Gemini technical score failed: %s", e)

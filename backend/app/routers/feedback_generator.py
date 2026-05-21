@@ -3,7 +3,6 @@ Feedback Generator Module
 Generates comprehensive interview feedback and recommendations
 """
 
-import json
 import logging
 from typing import Dict, List, Optional
 
@@ -15,219 +14,236 @@ class FeedbackGenerator:
 
     @staticmethod
     def generate_content_feedback(metrics: Dict) -> str:
-        """Generate specific feedback for content quality"""
         feedback = []
 
-        # Relevance feedback
         rel_score = metrics.get("relevance_score", 0)
         if rel_score >= 90:
-            feedback.append("✅ Soruya tam ve doğrudan cevap vermişsin. Odaklanman mükemmel.")
+            feedback.append("✅ Your answers were directly on point and fully relevant.")
         elif rel_score >= 80:
-            feedback.append("✅ Soruya iyi cevap verdim. Çoğunlukla ilgili.")
+            feedback.append("✅ Good relevance — answers addressed the questions well.")
         elif rel_score >= 70:
-            feedback.append("⚠️ Soruyla ilgili ama biraz dağınık. Daha odaklanmış cevap vermeyi dene.")
+            feedback.append("⚠️ Answers were somewhat relevant but a bit scattered. Try to stay more focused.")
         elif rel_score >= 60:
-            feedback.append("❌ Sorudan biraz sapmışsın. Soruyu daha dikkatli oku ve doğrudan cevapla.")
+            feedback.append("❌ You drifted from the question at times. Read each question more carefully.")
         else:
-            feedback.append("❌ Cevap sorudan oldukça sapıyor. Soruda istenen şeye cevap ver.")
+            feedback.append("❌ Answers were largely off-topic. Make sure to address what is actually being asked.")
 
-        # Keyword matching feedback
-        kw_score = metrics.get("keyword_match_score", 0)
-        if kw_score >= 80:
-            feedback.append("✅ Sorudaki önemli kavramları iyi ele almışsın.")
-        elif kw_score >= 60:
-            feedback.append("⚠️ Bazı önemli kelimeleri cevapında kullan. Soruyu daha kapsamlı tara.")
-        else:
-            feedback.append("❌ Sorunun temel kavramlarını ele almamışsın. Eksik detaylar var.")
-
-        # Completeness feedback
-        comp_score = metrics.get("completeness_score", 0)
         answer_length = metrics.get("answer_length_words", 0)
-        if comp_score >= 85 and answer_length >= 150:
-            feedback.append("✅ Cevabın kapsamlı ve yeterli detayda. Tebrikler!")
+        if answer_length >= 150:
+            feedback.append("✅ Answers were comprehensive and sufficiently detailed.")
         elif answer_length < 80:
-            feedback.append("⚠️ Biraz daha detaylı cevap verebilirdin. En az 150 kelime hedefle.")
-        elif answer_length > 500:
-            feedback.append("⚠️ Cevap biraz uzun. Kısa ve öz tutmayı dene.")
+            feedback.append("⚠️ Answers were too brief. Aim for at least 150 words per answer.")
+        elif answer_length > 800:
+            feedback.append("⚠️ Answers were quite long. Try to be more concise.")
 
-        # STAR feedback (behavioral soruları için)
         star_score = metrics.get("star_structure_score")
         if star_score is not None:
-            if star_score >= 90:
-                feedback.append("✅ STAR yapısını harika kullandın (Situation → Task → Action → Result).")
-            elif star_score >= 75:
-                feedback.append("✅ STAR yapısını kullanmışsın. Tüm bölümleri biraz daha detaylı yap.")
+            if star_score >= 75:
+                feedback.append("✅ Good use of the STAR structure (Situation → Task → Action → Result).")
             else:
-                feedback.append("⚠️ Cevapında Situation, Task, Action ve Result bölümlerini daha açık göster.")
+                feedback.append("⚠️ Try to structure answers more clearly using STAR: Situation, Task, Action, Result.")
 
-        # Technical accuracy feedback (teknik soruları için)
         tech_score = metrics.get("technical_accuracy_score")
-        if tech_score is not None:
+        if tech_score is not None and metrics.get("domain") == "technical":
             if tech_score >= 90:
-                feedback.append("✅ Teknik bilgin mükemmel. Konsept ve uygulamayı çok iyi anlamışsın.")
+                feedback.append("✅ Excellent technical knowledge demonstrated.")
             elif tech_score >= 75:
-                feedback.append("✅ Teknik bilgin iyi. Bazı detayları araştırmaya değer.")
+                feedback.append("✅ Good technical knowledge. Some details are worth reviewing further.")
             elif tech_score >= 60:
-                feedback.append("⚠️ Teknik bilginde eksiklikler var. Konu üzerinde biraz daha çalışmalısın.")
+                feedback.append("⚠️ Some gaps in technical knowledge were noticeable.")
             else:
-                feedback.append("❌ Teknik kavramları daha iyi öğrenmen gerek. Konu malzemesini gözden geçir.")
+                feedback.append("❌ Technical concepts need more study and practice.")
 
         return "\n".join(feedback)
 
     @staticmethod
     def generate_speech_feedback(metrics: Dict) -> str:
-        """Generate feedback for speech quality"""
         feedback = []
 
-        # Speech rate
         wpm = metrics.get("speech_rate_wpm", 0)
-        if 120 <= wpm <= 150:
-            feedback.append("✅ Konuşma hızın mükemmel ({} WPM). Dinlemesi kolay.".format(wpm))
-        elif wpm < 100:
-            feedback.append("⚠️ Biraz yavaş konuşuyorsun ({} WPM). Tempo artır.".format(wpm))
-        elif wpm > 170:
-            feedback.append("⚠️ Çok hızlı konuşuyorsun ({} WPM). Yavaşla, daha anlaşılır ol.".format(wpm))
+        if wpm and 120 <= wpm <= 150:
+            feedback.append("✅ Speaking pace is ideal ({} WPM).".format(wpm))
+        elif wpm and wpm < 100:
+            feedback.append("⚠️ Speaking pace is too slow ({} WPM). Try to pick up the tempo.".format(wpm))
+        elif wpm and wpm > 170:
+            feedback.append("⚠️ Speaking too fast ({} WPM). Slow down for clarity.".format(wpm))
 
-        # Pause and filler words
         pause_score = metrics.get("pause_frequency_score", 0)
         if pause_score >= 80:
-            feedback.append("✅ Konuşmanız doğal akış var. Duraksama ve fillers iyi.")
+            feedback.append("✅ Speech flowed naturally with good pause control.")
         elif pause_score >= 60:
-            feedback.append("⚠️ Biraz çok duraksama ve 'um/uh' sözcükleri var. Düşün sonra konuş.")
+            feedback.append("⚠️ Slightly too many pauses. Think before speaking rather than mid-sentence.")
         else:
-            feedback.append("❌ Çok sık duraksama yapıyorsun. Cevapları önceden düşün.")
-
-        # Volume stability
-        vol_score = metrics.get("volume_stability_score", 0)
-        if vol_score >= 85:
-            feedback.append("✅ Ses seviyeni iyi kontrol ediyorsun. Tutarlı ve profesyonel.")
-        elif vol_score >= 70:
-            feedback.append("⚠️ Ses seviyesi biraz dalgalı. Daha sabit bir ton dene.")
-        else:
-            feedback.append("❌ Ses seviyesi çok değişken. Mikrofon ve ses ayarlarını kontrol et.")
-
-        # Tone variation
-        tone_score = metrics.get("tone_variation_score", 0)
-        if tone_score >= 50:
-            feedback.append("✅ Konuşmanız renkli ve ilginç. Tone variation iyi.")
-        elif tone_score >= 30:
-            feedback.append("⚠️ Biraz monoton. Önemli kelimeleri vurgula, ton değiştir.")
-        else:
-            feedback.append("❌ Monoton konuşuyorsun. Ton varyasyonu artır, daha dinamik ol.")
+            feedback.append("❌ Too many hesitations detected. Prepare answers in advance to speak more fluently.")
 
         return "\n".join(feedback)
 
     @staticmethod
     def generate_nonverbal_feedback(metrics: Dict) -> str:
-        """Generate feedback for non-verbal communication"""
+        if metrics.get("nonverbal_aggregate") is None:
+            return ""
+
         feedback = []
 
-        # Eye contact
         eye_contact = metrics.get("eye_contact_score", 0)
         if eye_contact >= 75:
-            feedback.append("✅ Kameraya bakışın iyi. Samimi ve güvenli görünüyorsun.")
+            feedback.append("✅ Good eye contact — you came across as confident and engaging.")
         elif eye_contact >= 60:
-            feedback.append("⚠️ Kameraya daha sık bakabilirsin. Göz iletişimi önemli.")
+            feedback.append("⚠️ Try to maintain more consistent eye contact with the camera.")
         else:
-            feedback.append("❌ Kameraya çok az bakıyorsun. Güvensiz görünüyorsun.")
+            feedback.append("❌ Very little eye contact detected. This can appear unconfident.")
 
-        # Head stability
         head_stability = metrics.get("head_stability_score", 0)
         if head_stability >= 80:
-            feedback.append("✅ Başını sabit tutuyorsun. Kontrolüne ve profesyonel.")
+            feedback.append("✅ Head movement was stable and controlled — professional appearance.")
         elif head_stability >= 60:
-            feedback.append("⚠️ Başın biraz oynakla. Daha sabit tutmaya çalış.")
+            feedback.append("⚠️ Head moved around a bit. Try to stay still and composed.")
         else:
-            feedback.append("❌ Başın çok hareketli. Dikkat dağıtıcı. Daha sabit dur.")
+            feedback.append("❌ Excessive head movement detected — can be distracting.")
 
-        # Posture
         posture = metrics.get("posture_score", 0)
         if posture >= 75:
-            feedback.append("✅ Duruşun çok profesyonel. Dik ve kontrollü.")
+            feedback.append("✅ Good posture — upright and professional.")
         elif posture >= 60:
-            feedback.append("⚠️ Biraz eğik oturuyorsun. Daha dik otural daha iyi göz tutardın.")
+            feedback.append("⚠️ Slightly slouched. Sit up straight for a more confident look.")
         else:
-            feedback.append("❌ Çok eğik veya gergin görünüyorsun. Duruşunu düzelt, rahatla.")
-
-        # Facial expression
-        positive = metrics.get("facial_expression_positive", 0)
-        negative = metrics.get("facial_expression_negative", 0)
-        if positive >= 50 and negative < 10:
-            feedback.append("✅ Yüz ifaden güzel. Pozitif ve samimi görünüyorsun.")
-        elif negative > 20:
-            feedback.append("❌ Stresli veya üzgün görünüyorsun. Rahatla, gülümse!")
-        else:
-            feedback.append("⚠️ Biraz daha enerji gösterebilirsin. Gülümse, pozitif kalma.")
+            feedback.append("❌ Poor posture detected. Adjust your seating position.")
 
         return "\n".join(feedback)
 
     @staticmethod
-    def generate_strengths(metrics: Dict, content_feedback: str, speech_feedback: str, nonverbal_feedback: str) -> List[str]:
-        """Generate list of strengths"""
+    def generate_strengths(metrics: Dict) -> List[str]:
         strengths = []
+        domain = (metrics.get("domain") or "general").lower()
 
+        # Content
         if metrics.get("relevance_score", 0) >= 85:
-            strengths.append("Soruları tam anladın ve doğrudan cevap verdin")
-        if metrics.get("keyword_match_score", 0) >= 80:
-            strengths.append("Önemli kavramları iyi ele aldın")
+            strengths.append("Answered questions directly and stayed on topic")
         if metrics.get("content_score", 0) >= 85:
-            strengths.append("İçerik kalitesi mükemmel")
-        if metrics.get("speech_rate_wpm", 0) and 120 <= metrics["speech_rate_wpm"] <= 150:
-            strengths.append("Konuşma hızı profesyonel")
-        if metrics.get("tone_variation_score", 0) >= 50:
-            strengths.append("Konuşman renkli ve ilginç")
-        if metrics.get("eye_contact_score", 0) >= 75:
-            strengths.append("Kameraya bakışın samimi ve güvenli")
+            strengths.append("High content quality across answers")
         if metrics.get("answer_length_words", 0) >= 150:
-            strengths.append("Cevapların yeterince detaylı")
+            strengths.append("Answers were detailed and well-developed")
 
-        return strengths[:3] if strengths else ["Cevaplarında iyi çaba gösterdin"]
+        # STAR (general/behavioral)
+        star = metrics.get("star_structure_score")
+        if domain != "technical" and star is not None and star >= 75:
+            strengths.append("Well-structured answers using the STAR method")
+
+        # Technical accuracy (technical domain)
+        tech = metrics.get("technical_accuracy_score")
+        if domain == "technical" and tech is not None and tech >= 85:
+            strengths.append("Strong technical knowledge demonstrated")
+
+        # Speech
+        wpm = metrics.get("speech_rate_wpm", 0)
+        if wpm and 120 <= wpm <= 150:
+            strengths.append("Speaking pace was professional and clear")
+        if metrics.get("pause_frequency_score", 0) >= 80:
+            strengths.append("Speech flowed naturally with minimal hesitations")
+
+        # Nonverbal
+        if metrics.get("eye_contact_score") and metrics["eye_contact_score"] >= 75:
+            strengths.append("Strong eye contact — confident and engaging presence")
+        if metrics.get("posture_score") and metrics["posture_score"] >= 75:
+            strengths.append("Professional posture throughout the interview")
+
+        return strengths if strengths else ["Showed genuine effort throughout the interview"]
 
     @staticmethod
     def generate_improvements(metrics: Dict) -> List[str]:
-        """Generate list of areas for improvement"""
+        domain    = (metrics.get("domain") or "general").lower()
+        relevance = metrics.get("relevance_score", 0)
+        star      = metrics.get("star_structure_score")
+        tech      = metrics.get("technical_accuracy_score")
+        pause     = metrics.get("pause_frequency_score", 0)
+        eye       = metrics.get("eye_contact_score")
+        posture   = metrics.get("posture_score")
+        head      = metrics.get("head_stability_score")
+
         improvements = []
+        used = set()
 
-        if metrics.get("relevance_score", 0) < 80:
-            improvements.append("Sorulara daha odaklanmış cevaplar ver. Soruyu iki kez oku.")
-        if metrics.get("keyword_match_score", 0) < 70:
-            improvements.append("Sorudaki önemli kelimeleri cevapında da kullan")
-        if metrics.get("answer_length_words", 0) < 100:
-            improvements.append("Cevapların daha detaylı olması gerek. En az 150-200 kelime hedefle.")
-        if metrics.get("speech_rate_wpm", 0) and (metrics["speech_rate_wpm"] < 100 or metrics["speech_rate_wpm"] > 170):
-            improvements.append("Konuşma hızını düzenle (120-150 WPM hedefi)")
-        if metrics.get("pause_frequency_score", 0) < 70:
-            improvements.append("'Um' ve 'uh' gibi fillers'ı azalt. Sessizlik natural ama kısa tut.")
-        if metrics.get("eye_contact_score", 0) < 70:
-            improvements.append("Kameraya daha sık bak. Göz iletişimi güveni gösterir.")
-        if metrics.get("tone_variation_score", 0) < 40:
-            improvements.append("Konuşman biraz monoton. Önemli noktaları vurgula, ton değiştir.")
+        # ── Phase 1: absolute failures ──
+        if relevance < 60:
+            improvements.append("Focus more on directly answering each question")
+            used.add("relevance")
+        if domain != "technical" and star is not None and star < 50:
+            improvements.append("Structure answers using the STAR method: Situation, Task, Action, Result")
+            used.add("star")
+        if domain == "technical" and tech is not None and tech < 65:
+            improvements.append("Strengthen technical knowledge — review core concepts for this domain")
+            used.add("tech")
+        if pause < 70:
+            improvements.append("Reduce filler words and hesitations — silence is fine, keep it brief")
+            used.add("pause")
+        if eye is not None and eye < 50:
+            improvements.append("Maintain more eye contact with the camera to appear confident")
+            used.add("eye")
 
-        return improvements[:3] if improvements else []
+        # ── Phase 2: fill to minimum 2 using weakest metrics ──
+        if len(improvements) < 2:
+            pool = []
+            if "relevance" not in used:
+                pool.append((relevance, "relevance",
+                    "Keep working on staying focused and directly addressing each question"))
+            if "star" not in used and domain != "technical" and star is not None:
+                pool.append((star, "star",
+                    "Continue refining the STAR structure in your behavioral answers"))
+            if "tech" not in used and domain == "technical" and tech is not None:
+                pool.append((tech, "tech",
+                    "Continue strengthening your technical depth and precision"))
+            if "pause" not in used:
+                pool.append((pause, "pause",
+                    "Keep working on reducing hesitations for a smoother delivery"))
+            if "eye" not in used and eye is not None:
+                pool.append((eye, "eye",
+                    "Build more consistent eye contact for a stronger presence"))
+            if posture is not None:
+                pool.append((posture, "posture",
+                    "Continue working on maintaining upright, confident posture"))
+            if head is not None:
+                pool.append((head, "head",
+                    "Try to keep your head more stable to appear composed"))
+
+            pool.sort(key=lambda x: x[0])  # weakest first
+            needed = 2 - len(improvements)
+            for _, _, msg in pool[:needed]:
+                improvements.append(msg)
+
+        return improvements
 
     @staticmethod
     def calculate_overall_score(metrics: Dict) -> int:
-        """Calculate overall interview score"""
-        scores = {
-            "content": metrics.get("content_score", 50) * 0.4,
-            "speech": metrics.get("speech_quality_score", 50) * 0.3,
-            "nonverbal": metrics.get("eye_contact_score", 50) * 0.2,
-            "engagement": metrics.get("engagement_score", 50) * 0.1,
-        }
+        """
+        3-category weighted score. Domain-aware. Nonverbal excluded if no video.
+        Technical: content×0.55 + speech×0.20 + nonverbal×0.25 (video) / content×0.75 + speech×0.25 (no video)
+        General:   content×0.45 + speech×0.25 + nonverbal×0.30 (video) / content×0.65 + speech×0.35 (no video)
+        """
+        content  = metrics.get("content_score", 50)
+        speech   = metrics.get("speech_quality_score", 50)
+        nonverbal = metrics.get("nonverbal_aggregate")
+        domain   = (metrics.get("domain") or "general").lower()
 
-        overall = sum(scores.values()) / sum([0.4, 0.3, 0.2, 0.1])
-        return int(overall)
+        if domain == "technical":
+            if nonverbal is not None:
+                return int(content * 0.55 + speech * 0.20 + nonverbal * 0.25)
+            else:
+                return int(content * 0.75 + speech * 0.25)
+        else:
+            if nonverbal is not None:
+                return int(content * 0.45 + speech * 0.25 + nonverbal * 0.30)
+            else:
+                return int(content * 0.65 + speech * 0.35)
 
     @staticmethod
-    def generate_recommendation(overall_score: int, content_score: int, technical_score: Optional[int] = None) -> str:
-        """Generate hiring recommendation"""
-        if overall_score >= 80 and content_score >= 85:
+    def generate_recommendation(overall_score: int) -> str:
+        if overall_score >= 75:
             return "Strong Yes"
-        elif overall_score >= 70 and content_score >= 75:
+        elif overall_score >= 60:
             return "Yes"
-        elif overall_score >= 60 and content_score >= 65:
+        elif overall_score >= 45:
             return "Maybe"
-        elif overall_score >= 50:
+        elif overall_score >= 30:
             return "No"
         else:
             return "Strong No"
@@ -236,46 +252,41 @@ class FeedbackGenerator:
         """Generate complete interview feedback report"""
         logger.info("Generating full feedback report...")
 
-        content_feedback = self.generate_content_feedback(metrics)
-        speech_feedback = self.generate_speech_feedback(metrics)
+        if "domain" not in metrics and interview_data.get("domain"):
+            metrics = dict(metrics)
+            metrics["domain"] = interview_data["domain"]
+
+        content_feedback  = self.generate_content_feedback(metrics)
+        speech_feedback   = self.generate_speech_feedback(metrics)
         nonverbal_feedback = self.generate_nonverbal_feedback(metrics)
-        strengths = self.generate_strengths(metrics, content_feedback, speech_feedback, nonverbal_feedback)
-        improvements = self.generate_improvements(metrics)
-        overall_score = self.calculate_overall_score(metrics)
-        recommendation = self.generate_recommendation(
-            overall_score,
-            metrics.get("content_score", 50),
-            metrics.get("technical_accuracy_score")
-        )
+        strengths         = self.generate_strengths(metrics)
+        improvements      = self.generate_improvements(metrics)
+        overall_score     = self.calculate_overall_score(metrics)
+        recommendation    = self.generate_recommendation(overall_score)
+
+        nonverbal_agg = metrics.get("nonverbal_aggregate")
 
         report = {
-            "overall_score": overall_score,
-            "content_score": metrics.get("content_score", 50),
-            "speech_score": metrics.get("speech_quality_score", 50),
-            "nonverbal_score": int(
-                metrics.get(
-                    "nonverbal_aggregate",
-                    (metrics.get("eye_contact_score", 50) + metrics.get("posture_score", 50)) / 2,
-                )
-            ),
-            "strengths": strengths,
-            "improvements": improvements,
+            "overall_score":    overall_score,
+            "content_score":    metrics.get("content_score", 50),
+            "speech_score":     metrics.get("speech_quality_score", 50),
+            "nonverbal_score":  int(nonverbal_agg) if nonverbal_agg is not None else None,
+            "strengths":        strengths,
+            "improvements":     improvements,
             "content_feedback": content_feedback,
-            "speech_feedback": speech_feedback,
+            "speech_feedback":  speech_feedback,
             "nonverbal_feedback": nonverbal_feedback,
-            "recommendation": recommendation,
-            "metrics": metrics,
+            "recommendation":   recommendation,
+            "metrics":          metrics,
         }
 
         logger.info(f"Report generated: Score={overall_score}, Recommendation={recommendation}")
         return report
 
 
-# Singleton instance
 _generator = None
 
 def get_generator() -> FeedbackGenerator:
-    """Get or create FeedbackGenerator instance"""
     global _generator
     if _generator is None:
         _generator = FeedbackGenerator()

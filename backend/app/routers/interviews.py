@@ -4,23 +4,28 @@ import logging
 from pathlib import Path
 from typing import List, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 from ..database import SessionLocal
 from .. import models
-from .auth import get_current_user, require_admin, get_db
-from .ollama_service import generate_questions, fallback_questions, chat_response
+from .auth import get_current_user, get_db
+from .ollama_service import generate_questions, fallback_questions, research_company, chat_response
+from ..cv_read import read_cv_plaintext
 from ..analysis import stt, scoring
+from .messages import _, get_lang_from_header
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 ALLOWED_INTERVIEW_STATUSES = {
     "created",
+    "preparing",
+    "ready",
+    "preparation_failed",
     "in_progress",
-    "completed",
     "analyzing",
     "analyzed",
     "analysis_failed",
@@ -33,135 +38,6 @@ def get_categories(db: Session = Depends(get_db)):
     return [{"id": c.id, "name": c.name, "description": c.description} for c in categories]
 
 
-class QuestionCreate(BaseModel):
-    text: str
-    category_id: int
-    language: str
-    difficulty: int | None = None
-    is_active: int = 1
-
-
-class QuestionUpdate(BaseModel):
-    text: str | None = None
-    category_id: int | None = None
-    language: str | None = None
-    difficulty: int | None = None
-    is_active: int | None = None
-
-
-@router.get("/questions")
-def get_questions(
-    category_id: int | None = None,
-    language: str | None = None,
-    is_active: int | None = None,
-    db: Session = Depends(get_db),
-    current_admin: models.User = Depends(require_admin),
-):
-    query = db.query(models.Question)
-    if category_id is not None:
-        query = query.filter(models.Question.category_id == category_id)
-    if language is not None:
-        query = query.filter(models.Question.language == language)
-    if is_active is not None:
-        query = query.filter(models.Question.is_active == is_active)
-
-    questions = query.all()
-    creator_ids = {q.created_by for q in questions if q.created_by}
-    creators = db.query(models.User).filter(models.User.id.in_(creator_ids)).all() if creator_ids else []
-    creator_emails = {u.id: u.email for u in creators}
-    return [
-        {
-            "id": q.id,
-            "text": q.text,
-            "category_id": q.category_id,
-            "language": q.language,
-            "difficulty": q.difficulty,
-            "is_active": q.is_active,
-            "created_by": q.created_by,
-            "created_at": q.created_at.isoformat() if q.created_at else None,
-            "created_by_email": creator_emails.get(q.created_by) if q.created_by else None,
-        }
-        for q in questions
-    ]
-
-
-@router.post("/questions")
-def create_question(
-    payload: QuestionCreate,
-    db: Session = Depends(get_db),
-    current_admin: models.User = Depends(require_admin),
-):
-    new_q = models.Question(
-        text=payload.text,
-        category_id=payload.category_id,
-        language=payload.language,
-        difficulty=payload.difficulty,
-        is_active=payload.is_active,
-        created_by=current_admin.id,
-    )
-    db.add(new_q)
-    db.commit()
-    db.refresh(new_q)
-    return {
-        "id": new_q.id,
-        "text": new_q.text,
-        "category_id": new_q.category_id,
-        "language": new_q.language,
-        "difficulty": new_q.difficulty,
-        "is_active": new_q.is_active,
-        "created_by": new_q.created_by,
-        "created_at": new_q.created_at.isoformat() if new_q.created_at else None,
-        "created_by_email": current_admin.email,
-    }
-
-
-@router.delete("/questions/{question_id}")
-def delete_question(
-    question_id: int,
-    db: Session = Depends(get_db),
-    current_admin: models.User = Depends(require_admin),
-):
-    q = db.query(models.Question).filter(models.Question.id == question_id).first()
-    if not q:
-        raise HTTPException(status_code=404, detail="Soru bulunamadı")
-    db.query(models.InterviewQuestion).filter(models.InterviewQuestion.question_id == question_id).delete(synchronize_session=False)
-    db.delete(q)
-    db.commit()
-    return {"detail": "Soru silindi."}
-
-
-@router.put("/questions/{question_id}")
-def update_question(
-    question_id: int,
-    payload: QuestionUpdate,
-    db: Session = Depends(get_db),
-    current_admin: models.User = Depends(require_admin),
-):
-    q = db.query(models.Question).filter(models.Question.id == question_id).first()
-    if not q:
-        raise HTTPException(status_code=404, detail="Soru bulunamadı")
-    if payload.text is not None:
-        q.text = payload.text
-    if payload.category_id is not None:
-        q.category_id = payload.category_id
-    if payload.language is not None:
-        q.language = payload.language
-    if payload.difficulty is not None:
-        q.difficulty = payload.difficulty
-    if payload.is_active is not None:
-        q.is_active = payload.is_active
-    db.commit()
-    db.refresh(q)
-    return {
-        "id": q.id,
-        "text": q.text,
-        "category_id": q.category_id,
-        "language": q.language,
-        "difficulty": q.difficulty,
-        "is_active": q.is_active,
-    }
-
-
 class InterviewCreate(BaseModel):
     title: str
     domain: str
@@ -169,23 +45,28 @@ class InterviewCreate(BaseModel):
     company_name: str | None = None
     department_name: str | None = None
     position: str | None = None
+    sector: str | None = None
 
 
 @router.post("/interviews")
 def create_interview(
     payload: InterviewCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
+    request: Request = None,
 ):
+    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     profile = db.query(models.Profile).filter(models.Profile.user_id == current_user.id).first()
     if not profile or not getattr(profile, "cv_path", None):
-        raise HTTPException(status_code=400, detail="Mülakat oluşturmak için önce profilinize CV yüklemelisiniz.")
+        raise HTTPException(status_code=400, detail=_("cv_required", lang))
 
     cn = (payload.company_name or "").strip()
     dn = (payload.department_name or "").strip()
     pos = (payload.position or "").strip()
-    if not cn or not dn or not pos:
-        raise HTTPException(status_code=400, detail="Şirket, departman ve pozisyon alanları zorunludur.")
+    sec = (payload.sector or "").strip()
+    if not cn or not dn or not pos or not sec:
+        raise HTTPException(status_code=400, detail=_("fields_required", lang))
 
     new_interview = models.Interview(
         user_id=current_user.id,
@@ -195,85 +76,179 @@ def create_interview(
         company_name=cn,
         department_name=dn,
         position=pos,
+        sector=sec,
+        status="preparing",
     )
     db.add(new_interview)
     db.commit()
     db.refresh(new_interview)
 
-    target_n = random.randint(5, 7)
-    cv_text = getattr(profile, "cv_text", None)
-
-    # HIZLI BAŞLANGIC: Fallback sorularını direkt kullan (Ollama yavaş olduğu için)
-    # WebSocket'te (mülakatın başında) Ollama'dan dinamik sorular alınacak
-    logger.info(f"Mülakat oluşturma: fallback sorularını hızlı kullanıyorum")
-    ai_list = fallback_questions(payload.domain, payload.language, target_n)
-    logger.info(f"✅ {len(ai_list)} fallback soru yüklendi")
-
-    if ai_list:
-        order = 1
-        for item in ai_list[:target_n]:
-            text = (item.get("text") or "").strip()[:1024]
-            if not text:
-                continue
-            db.add(
-                models.InterviewQuestion(
-                    interview_id=new_interview.id,
-                    question_id=None,
-                    question_text=text,
-                    order=order,
-                )
-            )
-            order += 1
-        if order > 1:
-            db.commit()
-            return {
-                "id": new_interview.id,
-                "title": new_interview.title,
-                "domain": new_interview.domain,
-                "language": new_interview.language,
-                "status": new_interview.status,
-                "created_at": new_interview.created_at,
-                "question_source": "ollama_or_fallback",
-            }
-
-    raise HTTPException(status_code=500, detail="Mülakat soruları oluşturulamadı.")
-
-
-class DebugGenerateQuestionsRequest(BaseModel):
-    position: str
-    company_name: str | None = None
-    department_name: str | None = None
-    domain: str
-    language: str = "tr"
-    n_questions: int = 6
-
-
-@router.post("/debug/generate-questions")
-def debug_generate_questions(
-    payload: DebugGenerateQuestionsRequest,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    profile = db.query(models.Profile).filter(models.Profile.user_id == current_user.id).first()
-    if not profile:
-        raise HTTPException(status_code=400, detail="Önce profil bilgilerinizi doldurun.")
-    if not getattr(profile, "cv_path", None):
-        raise HTTPException(status_code=400, detail="Önce profilinize CV yüklemelisiniz.")
-
-    cv_text = getattr(profile, "cv_text", None)
-    questions = generate_questions(
-        position=payload.position,
-        company_name=payload.company_name,
-        department_name=payload.department_name,
+    cv_path = profile.cv_path
+    background_tasks.add_task(
+        _prepare_interview_background,
+        interview_id=new_interview.id,
+        position=pos,
+        company_name=cn,
+        department_name=dn,
         domain=payload.domain,
         language=payload.language,
-        cv_text=cv_text,
-        profile_university=getattr(profile, "university", None),
-        profile_department=getattr(profile, "department", None),
-        profile_class_year=getattr(profile, "class_year", None),
-        n_questions=payload.n_questions,
+        sector=sec,
+        profile_university=profile.university,
+        profile_department=profile.department,
+        profile_class_year=profile.class_year,
+        cv_path=cv_path,
     )
-    return {"questions": questions}
+
+    return {
+        "id": new_interview.id,
+        "title": new_interview.title,
+        "domain": new_interview.domain,
+        "language": new_interview.language,
+        "status": "preparing",
+        "created_at": new_interview.created_at,
+    }
+
+
+@router.post("/interviews/{interview_id}/retry-prep")
+def retry_preparation(
+    interview_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+    request: Request = None,
+):
+    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
+    interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
+    if interview.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail=_("not_authorized", lang))
+    if interview.status != "preparation_failed":
+        raise HTTPException(status_code=400, detail=_("not_preparation_failed", lang))
+
+    db.query(models.InterviewQuestion).filter(
+        models.InterviewQuestion.interview_id == interview_id
+    ).delete()
+    interview.status = "preparing"
+    interview.preparation_error = None
+    db.commit()
+    db.refresh(interview)
+
+    profile = db.query(models.Profile).filter(models.Profile.user_id == current_user.id).first()
+    cv_path = profile.cv_path if profile else None
+
+    background_tasks.add_task(
+        _prepare_interview_background,
+        interview_id=interview.id,
+        position=interview.position or "",
+        company_name=interview.company_name or "",
+        department_name=interview.department_name or "",
+        domain=interview.domain,
+        language=interview.language,
+        sector=interview.sector or "",
+        profile_university=profile.university if profile else None,
+        profile_department=profile.department if profile else None,
+        profile_class_year=profile.class_year if profile else None,
+        cv_path=cv_path,
+    )
+
+    return {"id": interview.id, "status": "preparing"}
+
+
+def _prepare_interview_background(
+    *,
+    interview_id: int,
+    position: str,
+    company_name: str,
+    department_name: str,
+    domain: str,
+    language: str,
+    sector: str | None,
+    profile_university: str | None,
+    profile_department: str | None,
+    profile_class_year: str | None,
+    cv_path: str | None,
+):
+    """Background task: company research → question generation → ready."""
+    logger.info(f"Background preparation started for interview {interview_id}")
+    db = SessionLocal()
+    try:
+        interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
+        if not interview:
+            logger.error(f"Interview {interview_id} not found in background task")
+            return
+
+        # Step 1: Research company
+        context = research_company(
+            company_name=company_name,
+            sector=sector,
+            department_name=department_name,
+            position=position,
+        )
+        if context:
+            interview.company_context = context
+            db.commit()
+            logger.info(f"Company context saved for interview {interview_id}: {len(context)} chars")
+
+        # Step 2: Read CV
+        cv_text = None
+        if cv_path:
+            cv_text = read_cv_plaintext(cv_path)
+
+        # Step 3: Generate questions
+        target_n = random.randint(5, 7)
+        ai_list = generate_questions(
+            position=position,
+            company_name=company_name,
+            department_name=department_name,
+            domain=domain,
+            sector=sector,
+            cv_text=cv_text,
+            profile_university=profile_university,
+            profile_department=profile_department,
+            profile_class_year=profile_class_year,
+            company_context=context,
+            n_questions=target_n,
+        )
+
+        if not ai_list:
+            logger.warning("Ollama question generation returned empty; using fallback.")
+            ai_list = fallback_questions(domain, target_n)
+
+        if ai_list:
+            order = 1
+            for item in ai_list[:target_n]:
+                text = (item.get("text") or "").strip()[:1024]
+                if not text:
+                    continue
+                db.add(
+                    models.InterviewQuestion(
+                        interview_id=interview_id,
+                        question_id=None,
+                        question_text=text,
+                        order=order,
+                    )
+                )
+                order += 1
+
+        # Step 4: Mark as ready
+        interview.status = "ready"
+        db.commit()
+        logger.info(f"Interview {interview_id} background preparation completed. Questions: {order - 1}")
+
+    except Exception as e:
+        logger.error(f"Background preparation failed for interview {interview_id}: {e}", exc_info=True)
+        try:
+            interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
+            if interview:
+                interview.status = "preparation_failed"
+                interview.preparation_error = str(e)[:2000]
+                db.commit()
+        except Exception as inner:
+            logger.error(f"Failed to mark interview {interview_id} as failed: {inner}")
+    finally:
+        db.close()
+
 
 
 @router.get("/interviews")
@@ -295,6 +270,32 @@ def list_interviews(
     ]
 
 
+@router.delete("/interviews/{interview_id}")
+def delete_interview(
+    interview_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+    request: Request = None,
+):
+    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
+    interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
+    if interview.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail=_("access_denied", lang))
+    db.query(models.InterviewQuestion).filter(models.InterviewQuestion.interview_id == interview_id).delete(synchronize_session=False)
+    db.query(models.InterviewAnswer).filter(models.InterviewAnswer.interview_id == interview_id).delete(synchronize_session=False)
+    db.query(models.Transcript).filter(models.Transcript.interview_id == interview_id).delete(synchronize_session=False)
+    db.query(models.Feedback).filter(models.Feedback.interview_id == interview_id).delete(synchronize_session=False)
+    if interview.video_path:
+        video_file = Path(interview.video_path)
+        if video_file.exists():
+            video_file.unlink()
+    db.delete(interview)
+    db.commit()
+    return {"detail": "Interview deleted."}
+
+
 class InterviewStatusUpdate(BaseModel):
     status: str
 
@@ -305,14 +306,16 @@ def update_interview_status(
     payload: InterviewStatusUpdate,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
+    request: Request = None,
 ):
+    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
-        raise HTTPException(status_code=404, detail="Mülakat bulunamadı")
+        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
     if interview.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Bu mülakata erişim yetkiniz yok")
+        raise HTTPException(status_code=403, detail=_("access_denied", lang))
     if payload.status not in ALLOWED_INTERVIEW_STATUSES:
-        raise HTTPException(status_code=400, detail="Geçersiz mülakat durumu")
+        raise HTTPException(status_code=400, detail=_("invalid_status", lang))
     interview.status = payload.status
     db.commit()
     db.refresh(interview)
@@ -328,12 +331,18 @@ async def upload_interview_video(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
+    request: Request = None,
 ):
+    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
-        raise HTTPException(status_code=404, detail="Mülakat bulunamadı")
+        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
     if interview.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Bu mülakata erişim yetkiniz yok")
+        raise HTTPException(status_code=403, detail=_("access_denied", lang))
+
+    allowed_types = {"video/webm", "video/mp4", "video/x-matroska"}
+    if file.content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Only video/webm, video/mp4 or video/mkv files are allowed.")
 
     UPLOAD_INTERVIEWS_DIR.mkdir(parents=True, exist_ok=True)
     interview_dir = UPLOAD_INTERVIEWS_DIR / str(interview_id)
@@ -348,7 +357,7 @@ async def upload_interview_video(
     db.commit()
 
     try:
-        transcript_text, duration, _, _ = stt.get_transcript(interview_id, str(target_path))
+        transcript_text, duration, _ignored1, _ignored2 = stt.get_transcript(interview_id, str(target_path))
         if transcript_text:
             analysis = scoring.score_transcript(transcript_text, duration, language=interview.language or "tr")
 
@@ -410,12 +419,14 @@ def get_interview(
     interview_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
+    request: Request = None,
 ):
+    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
-        raise HTTPException(status_code=404, detail="Mülakat bulunamadı")
+        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
     if interview.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Bu mülakata erişim yetkiniz yok")
+        raise HTTPException(status_code=403, detail=_("access_denied", lang))
 
     iqs = db.query(models.InterviewQuestion).filter(models.InterviewQuestion.interview_id == interview_id).order_by(models.InterviewQuestion.order).all()
     questions = []
@@ -448,6 +459,18 @@ def get_interview(
             "improvements": feedback_row.improvements,
         }
 
+    answers = db.query(models.InterviewAnswer).filter(
+        models.InterviewAnswer.interview_id == interview_id
+    ).order_by(models.InterviewAnswer.question_order).all()
+    answers_data = [
+        {
+            "question_order": a.question_order,
+            "question_text": a.question_text,
+            "answer_text": a.answer_text,
+        }
+        for a in answers
+    ]
+
     return {
         "id": interview.id,
         "user_id": interview.user_id,
@@ -456,10 +479,13 @@ def get_interview(
         "language": interview.language,
         "status": interview.status,
         "created_at": interview.created_at,
+        "company_context": interview.company_context,
+        "preparation_error": interview.preparation_error,
         "questions": questions,
         "transcript": transcript,
         "duration_seconds": duration,
         "feedback": feedback,
+        "answers": answers_data,
     }
 
 
@@ -473,12 +499,14 @@ def chat(
     payload: ChatMessage,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
+    request: Request = None,
 ):
+    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
-        raise HTTPException(status_code=404, detail="Interview not found")
+        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
     if interview.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You do not have access to this interview")
+        raise HTTPException(status_code=403, detail=_("access_denied", lang))
 
     transcript_row = db.query(models.Transcript).filter(models.Transcript.interview_id == interview_id).first()
     feedback_row = db.query(models.Feedback).filter(models.Feedback.interview_id == interview_id).first()
@@ -489,7 +517,7 @@ def chat(
 
     user_msg = (payload.message or "").strip()
     if not user_msg:
-        raise HTTPException(status_code=400, detail="Mesaj boş olamaz")
+        raise HTTPException(status_code=400, detail=_("empty_message", lang))
 
-    reply = chat_response(transcript, summary, strengths, improvements, user_msg, interview.language or "tr")
+    reply = chat_response(transcript, summary, strengths, improvements, user_msg)
     return {"reply": reply}

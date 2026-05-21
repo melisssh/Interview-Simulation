@@ -1,43 +1,45 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
+import Header from '../components/Header'
 
-const API = '/api'
+import { API } from '../api'
 
-const headerStyle = {
+const card = {
+  maxWidth: 640,
+  margin: '0 auto',
+  padding: '2.5rem 2rem',
   background: '#fff',
-  borderBottom: '1px solid #e5e7eb',
-  padding: '0.75rem 1.5rem',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
+  borderRadius: 12,
+  boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
 }
+
+const field = {
+  marginBottom: '1.25rem',
+}
+
 const inputStyle = {
   display: 'block',
   width: '100%',
-  padding: '0.75rem 1rem',
-  marginTop: '0.375rem',
-  fontSize: '1rem',
+  padding: '0.7rem 0.9rem',
+  marginTop: '0.35rem',
+  fontSize: '0.95rem',
   border: '1px solid #e5e7eb',
   borderRadius: 8,
   color: '#111',
   boxSizing: 'border-box',
+  outline: 'none',
 }
-const labelStyle = { fontSize: '0.95rem', fontWeight: 500, color: '#374151' }
-const primaryButtonStyle = {
-  padding: '0.75rem 1.5rem',
-  background: '#111',
-  color: '#fff',
-  borderRadius: 8,
-  border: 'none',
-  fontWeight: 500,
-  fontSize: '1rem',
-  cursor: 'pointer',
-}
+
+const labelStyle = { fontSize: '0.9rem', fontWeight: 500, color: '#374151' }
 
 export default function InterviewNew() {
   const [title, setTitle] = useState('')
   const [domain, setDomain] = useState('')
-  const [language, setLanguage] = useState('tr')
+  const [language] = useState('en')
+  const [companyName, setCompanyName] = useState('')
+  const [departmentName, setDepartmentName] = useState('')
+  const [position, setPosition] = useState('')
+  const [sector, setSector] = useState('')
   const [categories, setCategories] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -45,105 +47,108 @@ export default function InterviewNew() {
   const token = localStorage.getItem('token')
 
   useEffect(() => {
-    if (!token) {
-      navigate('/login')
-      return
-    }
-    fetch(`${API}/categories`)
-      .then((res) => res.json())
-      .then(setCategories)
-      .catch(() => setError('Kategoriler alınamadı'))
+    if (!token) { navigate('/login'); return }
+    fetch(`${API}/categories`).then((res) => res.json()).then(setCategories).catch(() => setError('Could not load categories'))
   }, [token, navigate])
 
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+
+    const finalSector = (sector || '').trim()
+    const finalCompany = (companyName || '').trim()
+    const finalDepartment = (departmentName || '').trim()
+    const finalPosition = (position || '').trim()
+    const finalTitle = (title || '').trim()
+
     setLoading(true)
     try {
       const res = await fetch(`${API}/interviews`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ title, domain, language }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          title: finalTitle,
+          domain,
+          language,
+          company_name: finalCompany,
+          department_name: finalDepartment,
+          position: finalPosition,
+          sector: finalSector,
+        }),
       })
       const data = await res.json()
-      if (!res.ok) {
-        setError(data.detail || 'Mülakat oluşturulamadı')
-        return
-      }
-      navigate(`/interview/${data.id}`)
-    } catch (err) {
-      setError('Bağlantı hatası')
-    } finally {
-      setLoading(false)
-    }
+      if (!res.ok) { setError(data.detail || 'Could not create interview'); return }
+      navigate('/dashboard')
+    } catch (err) { setError('Connection error') }
+    finally { setLoading(false) }
   }
 
   if (!token) return null
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5' }}>
-      <header style={headerStyle}>
-        <Link to="/dashboard" style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111', textDecoration: 'none' }}>
-          Mülakat Simülasyonu
-        </Link>
-        <Link to="/dashboard" style={{ fontSize: '0.95rem', color: '#374151', textDecoration: 'none' }}>
-          Dashboard'a dön
-        </Link>
-      </header>
-      <div style={{ maxWidth: 440, margin: '0 auto', padding: '3rem 1.5rem', background: '#fff', boxSizing: 'border-box' }}>
-        <h1 style={{ fontSize: '2rem', fontWeight: 700, color: '#111', marginBottom: '0.5rem', lineHeight: 1.2 }}>
-          Yeni mülakat
-        </h1>
-        <p style={{ fontSize: '1rem', color: '#6b7280', marginBottom: '1.5rem', lineHeight: 1.5 }}>
-          Başlık ve kategori seçin, mülakatı başlatın.
-        </p>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <label style={labelStyle}>
-            Başlık
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Örn: Backend mülakatı"
-              required
-              style={inputStyle}
-            />
-          </label>
-          <label style={labelStyle}>
-            Kategori (domain)
-            <select
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              required
-              style={inputStyle}
-            >
-              <option value="">Seçin</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.name}>
-                  {c.name} – {c.description}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={labelStyle}>
-            Dil
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="tr">Türkçe</option>
-              <option value="en">English</option>
-            </select>
-          </label>
-          {error && <p style={{ color: '#dc2626', margin: 0, fontSize: '0.9rem' }}>{error}</p>}
-          <button type="submit" disabled={loading} style={{ ...primaryButtonStyle, opacity: loading ? 0.7 : 1 }}>
-            {loading ? 'Oluşturuluyor...' : 'Mülakatı başlat'}
-          </button>
-        </form>
+      <Header />
+      <div style={{ padding: '2.5rem 1.5rem' }}>
+        <div style={card}>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: '#111', marginBottom: '0.35rem' }}>New interview</h1>
+          <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1.75rem', lineHeight: 1.5 }}>Enter title, category and company info.</p>
+          <form onSubmit={handleSubmit}>
+            <div style={field}>
+              <label style={labelStyle}>Title</label>
+              <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Backend interview" required style={inputStyle} />
+            </div>
+            <div style={field}>
+              <label style={labelStyle}>Category (domain)</label>
+              <select value={domain} onChange={(e) => setDomain(e.target.value)} required style={inputStyle}>
+                <option value="">Select</option>
+                {categories.map((c) => <option key={c.id} value={c.name}>{c.name} – {c.description}</option>)}
+              </select>
+            </div>
+            <div style={field}>
+              <label style={labelStyle}>Company name *</label>
+              <input type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="e.g. ABC Technology" required style={inputStyle} />
+            </div>
+            <div style={field}>
+              <label style={labelStyle}>Sector *</label>
+              <select value={sector} onChange={(e) => setSector(e.target.value)} required style={inputStyle}>
+                <option value="">Select</option>
+                <option value="Technology / Software">Technology / Software</option>
+                <option value="Finance / Banking">Finance / Banking</option>
+                <option value="Healthcare / Medical">Healthcare / Medical</option>
+                <option value="Education / Academia">Education / Academia</option>
+                <option value="Marketing / Advertising">Marketing / Advertising</option>
+                <option value="Legal / Law">Legal / Law</option>
+                <option value="Engineering / Manufacturing">Engineering / Manufacturing</option>
+                <option value="Retail / E-commerce">Retail / E-commerce</option>
+                <option value="Consulting / HR">Consulting / HR</option>
+                <option value="Media / Communications">Media / Communications</option>
+                <option value="Logistics / Transportation">Logistics / Transportation</option>
+                <option value="Public / Government">Public / Government</option>
+                <option value="Energy / Environment">Energy / Environment</option>
+                <option value="Real Estate / Construction">Real Estate / Construction</option>
+                <option value="Telecommunications">Telecommunications</option>
+                <option value="Tourism / Hospitality">Tourism / Hospitality</option>
+                <option value="Defense / Aerospace">Defense / Aerospace</option>
+                <option value="Pharmaceuticals / Biotech">Pharmaceuticals / Biotech</option>
+                <option value="Automotive / Transportation">Automotive / Transportation</option>
+              </select>
+            </div>
+            <div style={field}>
+              <label style={labelStyle}>Department name *</label>
+              <input type="text" value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} placeholder="e.g. Software Development" required style={inputStyle} />
+            </div>
+            <div style={field}>
+              <label style={labelStyle}>Position (applied role) *</label>
+              <input type="text" value={position} onChange={(e) => setPosition(e.target.value)} placeholder="e.g. Backend Developer" required style={inputStyle} />
+            </div>
+            {error && <p style={{ color: '#dc2626', margin: 0, fontSize: '0.9rem' }}>{error}</p>}
+            <button type="submit" disabled={loading} style={{
+              width: '100%', padding: '0.75rem', background: '#111', color: '#fff',
+              borderRadius: 8, border: 'none', fontWeight: 600, fontSize: '1rem',
+              cursor: 'pointer', opacity: loading ? 0.7 : 1, marginTop: '0.5rem',
+            }}>{loading ? 'Creating...' : 'Start interview'}</button>
+          </form>
+        </div>
       </div>
     </div>
   )

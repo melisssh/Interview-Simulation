@@ -10,6 +10,9 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     password = Column(String)
     is_admin = Column(Integer, default=0)  # 0 = normal kullanıcı, 1 = admin
+    is_verified = Column(Integer, default=0)
+    verification_token = Column(String(255), nullable=True, unique=True)
+    verification_expires_at = Column(DateTime, nullable=True)
 
 
 class Profile(Base):
@@ -32,9 +35,15 @@ class Interview(Base):
     title = Column(String, nullable=False)        # e.g. "Junior Backend Interview"
     domain = Column(String, nullable=False)       # e.g. "technical", "general"
     language = Column(String, nullable=False)     # e.g. "en", "tr"
-    status = Column(String, default="created")    # created/recording/completed/analyzed
+    status = Column(String, default="created")    # created/preparing/ready/preparation_failed/in_progress/analyzing/analyzed/analysis_failed
     created_at = Column(DateTime, default=datetime.utcnow)
     video_path = Column(String, nullable=True)    # path of uploaded interview video
+    company_name = Column(String, nullable=True)
+    department_name = Column(String, nullable=True)
+    position = Column(String, nullable=True)
+    sector = Column(String, nullable=True)
+    company_context = Column(String(5000), nullable=True)
+    preparation_error = Column(String(2000), nullable=True)
 
 
 class Category(Base):
@@ -54,6 +63,8 @@ class Question(Base):
     language = Column(String, nullable=False)            # "tr" / "en"
     difficulty = Column(Integer, nullable=True)          # 1–5
     is_active = Column(Integer, default=1)               # 1 = aktif, 0 = pasif
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class InterviewQuestion(Base):
@@ -61,7 +72,8 @@ class InterviewQuestion(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     interview_id = Column(Integer, ForeignKey("interviews.id"), nullable=False)
-    question_id = Column(Integer, ForeignKey("questions.id"), nullable=False)
+    question_id = Column(Integer, ForeignKey("questions.id"), nullable=True)
+    question_text = Column(String(1024), nullable=True)
     order = Column(Integer, nullable=False)              # 1, 2, 3...
 
 
@@ -73,8 +85,6 @@ class Transcript(Base):
     text = Column(String, nullable=False)
     duration_seconds = Column(Integer, nullable=True)
 
-<<<<<<< Updated upstream
-=======
 class InterviewAnswer(Base):
     __tablename__ = "interview_answers"
 
@@ -87,57 +97,42 @@ class InterviewAnswer(Base):
     # Content Metrics (Primary)
     relevance_score = Column(Integer, nullable=True)  # 0-100
     keyword_match_score = Column(Integer, nullable=True)  # 0-100
-    completeness_score = Column(Integer, nullable=True)  # 0-100
     star_structure_score = Column(Integer, nullable=True)  # 0-100 (behavioral soruları için)
     technical_accuracy_score = Column(Integer, nullable=True)  # 0-100 (teknik soruları için)
-    qualification_match_score = Column(Integer, nullable=True)  # 0-100 (CV match)
 
     # Speech Metrics (Secondary)
     speech_rate_wpm = Column(Integer, nullable=True)  # kelime/dakika
     pause_frequency_score = Column(Integer, nullable=True)  # 0-100
     volume_stability_score = Column(Integer, nullable=True)  # 0-100
-    tone_variation_score = Column(Integer, nullable=True)  # 0-100 (pitch variation %)
+    tone_variation_score = Column(Integer, nullable=True)  # 0-100
+    confidence_tone_score = Column(Integer, nullable=True)  # 0-100
 
     # Response Behavior
-    response_delay_seconds = Column(Integer, nullable=True)
     answer_length_words = Column(Integer, nullable=True)
+
+    # Sentiment & Engagement
+    sentiment_score = Column(Integer, nullable=True)  # 0-100
+    engagement_score = Column(Integer, nullable=True)  # 0-100
 
     # Non-verbal
     eye_contact_score = Column(Integer, nullable=True)  # 0-100
     head_stability_score = Column(Integer, nullable=True)  # 0-100
     posture_score = Column(Integer, nullable=True)  # 0-100
-    facial_expression_positive = Column(Integer, nullable=True)  # 0-100
-    facial_expression_neutral = Column(Integer, nullable=True)  # 0-100
-    facial_expression_negative = Column(Integer, nullable=True)  # 0-100
-
-    # Additional
-    sentiment_score = Column(Integer, nullable=True)  # -100 to 100
-    confidence_tone_score = Column(Integer, nullable=True)  # 0-100
 
     # Composite Score
     content_score = Column(Integer, nullable=True)  # İçerik composite (primary)
-    engagement_score = Column(Integer, nullable=True)  # Genel engagement
 
     # Feedback
     answer_feedback = Column(String(2000), nullable=True)
     red_flags = Column(String(1000), nullable=True)  # JSON: ["flag1", "flag2"]
 
     created_at = Column(DateTime, default=datetime.utcnow)
->>>>>>> Stashed changes
 
 class Feedback(Base):
     __tablename__ = "feedbacks"
 
     id = Column(Integer, primary_key=True, index=True)
     interview_id = Column(Integer, ForeignKey("interviews.id"), nullable=False)
-<<<<<<< Updated upstream
-    scores_json = Column(String, nullable=True)
-    summary = Column(String, nullable=True)
-    strengths = Column(String, nullable=True)
-    improvements = Column(String, nullable=True)
-
-=======
-
     # Overall Scores
     overall_score = Column(Integer, nullable=True)  # 0-100
     content_quality_score = Column(Integer, nullable=True)  # Primary
@@ -160,7 +155,6 @@ class Feedback(Base):
     overall_recommendation = Column(String(50), nullable=True)  # "Strong No" / "No" / "Maybe" / "Yes" / "Strong Yes"
 
     created_at = Column(DateTime, default=datetime.utcnow)
->>>>>>> Stashed changes
 
 class PasswordResetToken(Base):
     __tablename__ = "password_reset_tokens"

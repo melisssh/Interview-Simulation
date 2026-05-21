@@ -18,6 +18,7 @@ from ..analysis.speech_metrics import (
 )
 from ..database import SessionLocal
 from .. import models
+from .messages import _, get_lang_from_header
 
 try:
     from faster_whisper import WhisperModel
@@ -39,13 +40,13 @@ _WS_WHISPER_MODEL = None
 def _get_ws_whisper_model():
     global _WS_WHISPER_MODEL
     if WhisperModel is None:
-        raise RuntimeError("faster-whisper yüklü değil")
+        raise RuntimeError("faster-whisper is not installed")
     if _WS_WHISPER_MODEL is None:
         _WS_WHISPER_MODEL = WhisperModel("base", device="cpu", compute_type="int8")
     return _WS_WHISPER_MODEL
 
 
-def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "tr") -> dict:
+def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "en") -> dict:
     """Transcribe PCM int16 mono @48kHz; attach speech metrics from audio + segment timings."""
     empty: dict = {
         "text": "",
@@ -93,9 +94,9 @@ def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "tr") -> di
 
 def _ollama_chat(messages: list[dict], model: str | None = None):
     if not ollama:
-        raise RuntimeError("Ollama python paketi yüklü değil")
+        raise RuntimeError("Ollama python package is not installed")
 
-    target_model = model or os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+    target_model = model or os.getenv("OLLAMA_MODEL", "llama3.1:8b")
     host = (os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST") or "").strip()
     options = {
         "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
@@ -110,10 +111,7 @@ def _ollama_chat(messages: list[dict], model: str | None = None):
 
 
 def _looks_wrong_language(text: str, language: str) -> bool:
-    low = (text or "").lower()
-    if language == "tr":
-        return any(tok in low for tok in ["tell me", "what ", "describe ", "could you", "example"])
-    return any(tok in low for tok in ["nasıl", "neden", "örnek", "mısın", "misin", "teşekkür"])
+    return False
 
 
 class InterviewSession:
@@ -124,117 +122,144 @@ class InterviewSession:
     PHASE_CLOSING = "closing"
     PHASE_ENDED = "ended"
 
-    def __init__(self, interview, profile=None):
+    def __init__(self, interview, profile=None, prepared_questions=None):
         self.interview = interview
         self.profile = profile or {}
         self.domain = interview.domain or "general"
-        self.language = interview.language or "tr"
-        self.max_questions = 6
+        self.language = interview.language or "en"
+        self.base_questions = 7
+        self.min_questions = 5
+        self.max_questions = 12
         self.question_count = 0
         self.answer_count = 0
+        self.short_answers = 0
+        self.detailed_answers = 0
+        self.used_followups_per_q = 0
         self.history: List[Dict] = []
         self.phase = self.PHASE_GREETING
         self.cv_context = ""
         if profile:
             cv_text = profile.get("cv_text", "") or ""
-            uni = profile.get("university", "") or ""
             dept = profile.get("department", "") or ""
-            self.cv_context = f"Aday Profili:\n- Üniversite: {uni}\n- Bölüm: {dept}\n- CV Özeti: {cv_text[:800]}"
+            self.cv_context = f"Candidate Profile:\n- Department: {dept}\n- CV Summary: {cv_text[:800]}"
+        self.company_context = (interview.company_context or "").strip()
+        self.prepared_questions = []
+        if prepared_questions:
+            sorted_qs = sorted(prepared_questions.items(), key=lambda x: x[0])
+            for order, q in sorted_qs:
+                text = q.get("text", "").strip()
+                if text:
+                    self.prepared_questions.append({"order": order, "text": text})
 
     def _build_system_prompt(self) -> str:
-        dil = self.language
-        company_name = self.interview.company_name or "Şirket"
-        department_name = self.interview.department_name or "Departman"
-        position = self.interview.position or "Pozisyon"
-        interview_type = "Teknik Mülakat" if self.domain == "technical" else "Davranışsal/HR Mülakat"
+        company_name = self.interview.company_name or "the company"
+        department_name = self.interview.department_name or "Department"
+        position = self.interview.position or "Position"
+        interview_type = "Technical Interview" if self.domain == "technical" else "General Interview"
 
         context_block = ""
         if self.cv_context:
-            context_block = f"\n\nADAY HAKKINDA BİLGİLER (BU BİLGİLERİ SORULARINA YEDİR):\n{self.cv_context}"
+            context_block = f"\n\nCANDIDATE BACKGROUND (reference info for generating questions -- do not validate/compare answers against it):\n{self.cv_context}"
 
-        if dil == "tr":
-            return f"""Sen {company_name} şirketinin profesyonel ve deneyimli mülakatçısısın.
-Mülakat dili SADECE TÜRKÇEDİR. İngilizce KESİNlikle kullanma.
+        extra_context = ""
+        if self.company_context:
+            extra_context = f"\n\nCOMPANY CONTEXT (reference info for generating questions):\n{self.company_context}"
 
-POZİSYON:
-- Unvan: {position}
-- Departman: {department_name}
-- Tip: {interview_type}
-{context_block}
+        if self.domain == "technical":
+            kategori_bolumu = """  1) Introduction & Self-Presentation (education, past experiences, who you are)
+  2) Motivation & Career (why this role/department, career goals, 5-year plan)
+  3) Position & Industry Knowledge (industry trends, company's position in the market)
+  4) Technical Skills & Tool Knowledge (tools/technologies specific to the role and sector)
+  5) Project Experience (managed projects, task distribution, deadlines)
+  6) Problem Solving (challenges faced, approach, outcome)
+  7) Team & Organization (teamwork, reporting structure)"""
 
-MÜLAKAT FAZLARI:
-1. GİRİŞ: Kısa bir karşılama yap ve adaydan kendini tanıtmasını, eğitim ve deneyim geçmişini anlatmasını iste.
-2. DERİNLEŞME: Adayın verdiği cevaplara ve CV'sine bakarak teknik veya davranışsal sorular sor.
-   - Eğer "technical" ise: Kullandığı teknolojileri, proje deneyimlerini ve teknik yaklaşımlarını sorgula.
-   - Eğer "general" ise: Takım çalışması, zorluklarla başa çıkma ve iletişim becerilerini sorgula.
-3. KAPANIŞ: Yeterli soru sorulduğunda (genellikle 5-7 arası) kısa bir teşekkürle mülakatı bitir.
-
-KESİN KURALLAR:
-1. DİL: Sadece Türkçe yanıt ver. İngilizce kelime, selamlama veya terim YASAK.
-2. TEK SORU: Her turda SADECE 1 soru sor. Asla birden fazla soru sorma.
-3. DOĞAL AKIŞ: Adayın son cevabına bağlı kal. Konuyu dağıtma.
-4. GERİ BİLDİRİM: Soruya geçmeden önce adayın cevabını çok kısa (1 cümle) onayla. (Örn: "Harika bir örnek, teşekkürler. Peki...")
-5. KISA VE NET: Soruların maksimum 2-3 cümle olsun.
-
-ÖNEMLİ: Adayın CV'sindeki detayları yakala ve ona göre soru üret!"""
-        else:
-            return f"""You are a professional and experienced interviewer at {company_name}.
+            return f"""You are a real technical interviewer at {company_name}.
+You are a technical expert who knows the position and sector well. Focus on assessing the candidate's technical knowledge and experience.
 The interview language is STRICTLY ENGLISH. Do NOT use Turkish.
 
 POSITION:
 - Title: {position}
 - Department: {department_name}
+- Sector: {self.interview.sector or 'Not specified'}
 - Type: {interview_type}
-{context_block}
+{context_block}{extra_context}
 
-INTERVIEW PHASES:
-1. INTRODUCTION: Brief welcome, ask the candidate to introduce themselves and their background.
-2. DEEP-DIVE: Ask technical or behavioral questions based on answers and CV.
-3. CLOSING: When enough questions are asked (usually 5-7), give a short thank you and end the interview.
+INTERVIEW FLOW:
+- INTRODUCTION: Brief welcome, do NOT introduce yourself by name. Move directly to the first question.
+- QUESTIONS: Ask the next prepared question from the list. Follow this ORDER:
+{kategori_bolumu}
+- CLOSING: When all prepared questions are done, short thank you and end.
 
-STRICT RULES:
-1. LANGUAGE: Reply ONLY IN ENGLISH. No Turkish words allowed.
-2. ONE QUESTION: Ask EXACTLY ONE question per turn.
-3. NATURAL FLOW: Stay connected to the candidate's last answer.
-4. FEEDBACK: Acknowledge the answer briefly (1 sentence) before asking the next question.
-5. SHORT & CLEAR: Keep questions max 2-3 sentences.
+RULES:
+1. Speak ONLY in English.
+2. Ask EXACTLY ONE question per turn.
+3. NATURAL FLOW: Don't repeat the candidate's answer. You CAN reference their previous answer naturally.
+4. NO OVERPRAISING: Don't use "amazing", "wonderful", "excellent" etc. Be professional and natural.
+5. NO UNNECESSARY ACKNOWLEDGMENT: A simple "thanks" is enough, don't praise every answer.
+6. SHORT & CLEAR: Max 2 sentences per question. No fluff.
+7. CV REFERENCE RULE — CRITICAL: If you reference something from the candidate's CV that they have NOT mentioned during the interview, say "I see from your CV that..." or "According to your CV...". NEVER say "as you mentioned" or "you said" for CV information. Only use "as you mentioned" or "you said" if the candidate actually said it in this conversation.
+8. The candidate is APPLYING to the company, NOT working there. Never say "at your company" as if they work there."""
 
-IMPORTANT: Catch details from the candidate's CV and ask specific questions about them!"""
+        else:
+            kategori_bolumu = """  1) Introduction & Self-Presentation (education, past experiences, how they describe themselves)
+  2) Motivation & Interest (why this position/company, what drives them, curiosity to learn)
+  3) Career Goals (short and long-term goals, where they see themselves in this role)
+  4) Strengths & Growth Areas (self-awareness, what they do to improve)
+  5) Company & Industry Knowledge (how well they know the company, their perspective on the sector, depth of research)
+  6) Communication & Team Fit (how they work with others, handling disagreements, receiving feedback)
+  7) Closing (any questions from the candidate, final impression)"""
+
+            return f"""You are a real HR interviewer at {company_name}.
+Focus on assessing the candidate's motivation, genuine interest in the role, cultural fit, and overall potential.
+This is NOT a technical exam -- your goal is to understand who they are, what drives them, and how well they'd fit.
+The interview language is STRICTLY ENGLISH. Do NOT use Turkish.
+
+POSITION:
+- Title: {position}
+- Department: {department_name}
+- Sector: {self.interview.sector or 'Not specified'}
+- Type: {interview_type}
+{context_block}{extra_context}
+
+INTERVIEW FLOW:
+- INTRODUCTION: Brief welcome, do NOT introduce yourself by name. Move directly to the first question.
+- QUESTIONS: Ask the next prepared question from the list. Follow this ORDER:
+{kategori_bolumu}
+- CLOSING: When all prepared questions are done, short thank you and end.
+
+RULES:
+1. Speak ONLY in English.
+2. Ask EXACTLY ONE question per turn.
+3. NATURAL FLOW: Don't repeat the candidate's answer. You CAN reference their previous answer naturally.
+4. NO OVERPRAISING: Don't use "amazing", "wonderful", "excellent" etc. Be professional and natural.
+5. NO UNNECESSARY ACKNOWLEDGMENT: A simple "thanks" is enough, don't praise every answer.
+6. SHORT & CLEAR: Max 2 sentences per question. No fluff.
+7. CV REFERENCE RULE — CRITICAL: If you reference something from the candidate's CV that they have NOT mentioned during the interview, say "I see from your CV that..." or "According to your CV...". NEVER say "as you mentioned" or "you said" for CV information. Only use "as you mentioned" or "you said" if the candidate actually said it in this conversation.
+8. FOCUS: Ask about motivation, interest, why they applied, and cultural fit. NOT technical tools or skills.
+9. The candidate is APPLYING to the company, NOT working there. Never say "at your company" as if they work there."""
 
     def _get_fallback(self) -> str:
-        lang = self.language
         if self.phase == self.PHASE_GREETING:
-            if lang == "en":
-                return "Welcome! To start, could you briefly introduce yourself and your relevant background?"
-            return "Hoş geldiniz! Başlangıç için kendinizi ve ilgili geçmişinizi kısaca tanıtır mısınız?"
+            return "Welcome! Could you briefly introduce yourself -- your education and who you are?"
 
         if self.phase == self.PHASE_CLOSING:
-            if lang == "en":
-                return "Thank you for your time. The interview is now complete. We will get back to you soon."
-            return "Vaktiniz için teşekkür ederiz. Mülakatımız sona erdi. En kısa sürede size dönüş yapacağız."
+            return "Thank you for your time. The interview is now complete. We will get back to you soon."
 
-        fallbacks_en = [
+        fallbacks = [
             "Can you give a concrete example and explain your exact actions?",
             "What was the most difficult part, and how did you handle it?",
             "What would you do differently if you faced the same situation again?",
             "How does this experience prepare you for this role?",
             "Thank you. Is there anything else you would like to add?",
         ]
-        fallbacks_tr = [
-            "Somut bir örnek verip tam olarak hangi adımları attığınızı anlatır mısınız?",
-            "En zorlandığınız nokta neydi ve bunu nasıl yönettiniz?",
-            "Aynı durum tekrar olsa neyi farklı yapardınız?",
-            "Bu deneyim sizi bu rol için nasıl hazırladı?",
-            "Teşekkürler. Eklemek istediğiniz son bir şey var mı?",
-        ]
-        pool = fallbacks_en if lang == "en" else fallbacks_tr
-        idx = min(max(0, self.question_count - 1), len(pool) - 1)
-        return pool[idx]
+        idx = min(max(0, self.question_count - 1), len(fallbacks) - 1)
+        return fallbacks[idx]
 
     def _ask_ollama(self, prompt: str) -> str | None:
-        # OPTIMIZASYON: Ollama çok ağır olduğu için, fallback sorularını kullan
-        # Eğer Ollama istersen, bu fonksiyonun başına True ekle:
-        # if True:  # Ollama'yı devre dışı bırak
+        # OPTIMIZATION: Ollama is heavy; use fallback questions if needed.
+        # To disable Ollama, add True at the start of this function:
+        # if True:  # Disable Ollama
         #     return None
 
         try:
@@ -244,7 +269,7 @@ IMPORTANT: Catch details from the candidate's CV and ask specific questions abou
             messages.append({"role": "user", "content": prompt})
 
             response = _ollama_chat(
-                model=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
+                model=os.getenv("OLLAMA_MODEL", "llama3.1:8b"),
                 messages=messages,
             )
             out = (response.get("message", {}).get("content", "") or "").strip()
@@ -256,67 +281,99 @@ IMPORTANT: Catch details from the candidate's CV and ask specific questions abou
     def get_greeting(self) -> str:
         """Phase 1: Greeting + first question."""
         self.phase = self.PHASE_QUESTIONS
-        lang = self.language
-        if lang == "en":
-            starter = "Start the interview with a brief welcome and the first question only."
-        else:
-            starter = "Mülakatı kısa bir karşılama ve yalnızca ilk soruyla başlat."
+        first_q = ""
+        if self.prepared_questions:
+            first_q = self.prepared_questions[0]["text"]
+        if not first_q:
+            first_q = "Could you briefly introduce yourself and your relevant background?"
+
+        starter = (
+            "Start the interview with a brief welcome (do NOT introduce yourself by name). "
+            "Then ask this EXACT first question -- do NOT change it, do NOT skip it, do NOT replace it with a different question:\n\n"
+            f'"{first_q}"\n\n'
+            "CRITICAL: You MUST ask this exact question as the first question. "
+            "Do NOT ask about motivation, goals, or anything else first. "
+            "The very first question MUST be about the candidate introducing themselves."
+        )
 
         q = self._ask_ollama(starter)
-        if not q or _looks_wrong_language(q, lang):
+        if not q or _looks_wrong_language(q, self.language):
             q = self._get_fallback()
         self.question_count = 1
         self.history.append({"role": "assistant", "content": q})
         return q
+
+    def _answer_quality(self, transcript: str) -> dict:
+        words = transcript.split()
+        wc = len(words)
+        low = transcript.lower()
+        struggling_words = [
+            "i don't know", "i'm not sure", "i don't remember", "pass", "next question",
+        ]
+        is_struggling = any(w in low for w in struggling_words)
+        return {
+            "word_count": wc,
+            "is_short": wc < 25,
+            "is_detailed": wc > 120,
+            "is_struggling": is_struggling,
+        }
 
     def handle_answer(self, transcript: str) -> tuple[str, bool]:
         """Phase 2: Process answer, generate next question. Returns (response, is_ended)."""
         self.answer_count += 1
         self.history.append({"role": "user", "content": transcript})
 
-        if self.answer_count >= self.max_questions:
-            self.phase = self.PHASE_CLOSING
+        q_quality = self._answer_quality(transcript)
+        is_shallow = q_quality["is_short"] or q_quality["is_struggling"]
+        logger.info(f"🔹 handle_answer: q#{self.question_count} answer#{self.answer_count} words={q_quality['word_count']} short={q_quality['is_short']} struggling={q_quality['is_struggling']} shallow={is_shallow} followups={self.used_followups_per_q}")
 
-        if self.phase == self.PHASE_CLOSING:
-            closing = self._get_fallback()
-            self.history.append({"role": "assistant", "content": closing})
-            self.phase = self.PHASE_ENDED
-            return closing, True
+        # Which prepared question are we on?
+        current_q_index = min(self.question_count - 1, len(self.prepared_questions) - 1) if self.prepared_questions else -1
+        total_prepared = len(self.prepared_questions)
 
-        lang = self.language
-        next_q_num = self.question_count + 1
-        
-        # Dinamik Prompt: Faz ve Profil bilgisi içerir
-        phase_instruction = ""
-        if self.question_count < 2:
-            phase_instruction = "Adayın kendini tanıtmasına dayanarak, geçmişini ve motivasyonunu derinleştiren bir soru sor."
-        elif self.domain == "technical":
-            phase_instruction = "Adayın teknik bilgilerini ve CV'sindeki projeleri sorgulayan spesifik bir teknik soru sor."
-        else:
-            phase_instruction = "Adayın davranışsal yetkinliklerini (takım, çatışma, liderlik) ölçen bir durum sorusu sor."
-
-        if lang == "en":
+        # Check if we should ask a follow-up (shallow answer, haven't used follow-up yet for this question)
+        if is_shallow and self.used_followups_per_q < 1 and current_q_index >= 0 and current_q_index < total_prepared:
+            self.used_followups_per_q += 1
+            q_text = self.prepared_questions[current_q_index]["text"]
             prompt = (
                 f"Candidate's answer: {transcript}\n"
-                f"Context: {self.cv_context}\n"
-                f"Instruction: {phase_instruction}\n"
-                f"Phase: Question {next_q_num} of roughly {self.max_questions}.\n"
-                "Ask exactly one next question in English. Acknowledge their answer briefly first."
+                f"The question was: {q_text}\n"
+                "The candidate's answer was brief. Ask ONE short follow-up to get more detail, then we'll move to the next topic. Be natural."
             )
-        else:
-            prompt = (
-                f"Adayın cevabı: {transcript}\n"
-                f"Bağlam (Profil): {self.cv_context}\n"
-                f"Talimat: {phase_instruction}\n"
-                f"Faz: Yaklaşık {self.max_questions} sorudan {next_q_num}. soru.\n"
-                "Adayın cevabını çok kısa (1 cümle) onayla ve ardından Türkçe bir sonraki soruyu sor."
-            )
+            logger.info(f"🔹 Follow-up triggered: q_index={current_q_index} followup={self.used_followups_per_q}")
+
+            q = self._ask_ollama(prompt)
+            if not q or _looks_wrong_language(q, self.language):
+                q = "Could you tell me more about that?"
+            self.history.append({"role": "assistant", "content": q})
+            logger.info(f"🔹 Follow-up response: {q[:80]}")
+            return q, False
+
+        # Move to next prepared question
+        logger.info(f"🔹 Moving to next question: current_q_index={current_q_index} -> next={current_q_index + 1} total={total_prepared}")
+        self.used_followups_per_q = 0
+        next_q_index = current_q_index + 1
+
+        if next_q_index >= total_prepared:
+            self.phase = self.PHASE_ENDED
+            q = "Thank you for participating in this interview!"
+            self.history.append({"role": "assistant", "content": q})
+            return q, True
+
+        next_q = self.prepared_questions[next_q_index]
+        next_q_text = next_q["text"]
+        self.question_count = next_q_index + 1
+
+        prompt = (
+            f"The candidate answered the previous question. "
+            f"Now ask the following next question naturally, you may briefly acknowledge their answer first but keep it very short (1-2 words max):\n\n"
+            f'"{next_q_text}"\n\n'
+            "Ask this question. Do NOT change or replace it."
+        )
 
         q = self._ask_ollama(prompt)
-        if not q or _looks_wrong_language(q, lang):
-            q = self._get_fallback()
-
-        self.question_count = next_q_num
+        if not q or _looks_wrong_language(q, self.language):
+            q = next_q_text
         self.history.append({"role": "assistant", "content": q})
         return q, False
 
@@ -324,29 +381,57 @@ IMPORTANT: Catch details from the candidate's CV and ask specific questions abou
 @router.websocket("/ws/interview/{interview_id}")
 async def websocket_interview(websocket: WebSocket, interview_id: int):
     print(f"\n🔵🔵🔵 WS HANDLER START: interview_id={interview_id} 🔵🔵🔵\n")
-    await websocket.accept()
-    print(f"🔵 WebSocket accept edildi\n")
-    logger.info(f"🔵 WebSocket açıldı: interview_id={interview_id}")
 
-    print(f"🔵 SessionLocal oluşturuluyor...\n")
+    # Token check (from query param)
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="Token required")
+        return
+    try:
+        import jwt
+        payload = jwt.decode(token, os.getenv("JWT_SECRET_KEY", "sizin-gizli-anahtar-buraya-degisitirin"), algorithms=["HS256"])
+        ws_user_id = payload.get("user_id")
+        if not ws_user_id:
+            await websocket.close(code=4001, reason="Invalid token")
+            return
+    except Exception:
+        await websocket.close(code=4001, reason="Invalid token")
+        return
+
+    await websocket.accept()
+    print(f"🔵 WebSocket accepted\n")
+    logger.info(f"🔵 WebSocket opened: interview_id={interview_id}")
+    ws_lang = get_lang_from_header(websocket.headers.get("accept-language"))
+
+    print(f"🔵 Creating SessionLocal...\n")
     db = SessionLocal()
-    print(f"🔵 SessionLocal oluşturuldu\n")
+    print(f"🔵 SessionLocal created\n")
 
     try:
-        print(f"🔵 Try bloğu başladı\n")
+        print(f"🔵 Try block started\n")
         interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
-        print(f"🔵 Interview sorgusu yapıldı: {interview is not None}\n")
-        logger.info(f"Interview sorgusu yapıldı: {interview is not None}")
+        print(f"🔵 Interview query done: {interview is not None}\n")
+        logger.info(f"Interview query done: {interview is not None}")
+
+        if not interview:
+            await websocket.send_json({"type": "error", "message": _("interview_not_found", ws_lang)})
+            await websocket.close(code=4004)
+            return
+
+        # Check if the user in the token is the interview owner
+        if interview.user_id != ws_user_id:
+            await websocket.close(code=4003, reason="You do not have access to this interview")
+            return
 
         # Fetch interview questions from database
         interview_questions = {}
         if interview:
-            print(f"🔵 Interview soruları yükleniyor...\n")
+            print(f"🔵 Loading interview questions...\n")
             iqs = db.query(models.InterviewQuestion).filter(
                 models.InterviewQuestion.interview_id == interview_id
             ).order_by(models.InterviewQuestion.order).all()
-            print(f"🔵 Interview soruları yüklendi: {len(iqs)}\n")
-            logger.info(f"Interview soruları yüklendi: {len(iqs)}")
+            print(f"🔵 Interview questions loaded: {len(iqs)}\n")
+            logger.info(f"Interview questions loaded: {len(iqs)}")
             for iq in iqs:
                 question_text = iq.question_text or ""
                 if not question_text and iq.question_id:
@@ -360,7 +445,7 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                     "id": iq.id
                 }
 
-        # Profil ve CV bilgilerini çek
+        # Fetch profile and CV data
         profile_data = {}
         if interview:
             profile = db.query(models.Profile).filter(models.Profile.user_id == interview.user_id).first()
@@ -370,40 +455,45 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                     "department": profile.department or "",
                     "cv_text": ""
                 }
-                # CV metni varsa oku
+                # Read CV text if available
                 if profile.cv_path:
-                    try:
-                        from pypdf import PdfReader
-                        reader = PdfReader(profile.cv_path)
-                        text_parts = []
-                        for page in reader.pages:
-                            text_parts.append(page.extract_text())
-                        profile_data["cv_text"] = "\n".join(text_parts)
-                        logger.info(f"CV yüklendi: {len(profile_data['cv_text'])} karakter")
-                    except Exception as e:
-                        logger.warning(f"CV okuma hatası: {e}")
+                    from ..cv_read import read_cv_plaintext
+                    cv_text = read_cv_plaintext(profile.cv_path)
+                    if cv_text:
+                        profile_data["cv_text"] = cv_text
+                        logger.info(f"CV loaded: {len(cv_text)} characters")
+                    else:
+                        logger.warning(f"Could not read CV: {profile.cv_path}")
 
-        print(f"🔵 Profil ve CV yüklendi\n")
+        print(f"🔵 Profile and CV loaded\n")
         if not interview:
-            await websocket.send_json({"type": "error", "message": "Mülakat bulunamadı"})
+            await websocket.send_json({"type": "error", "message": _("interview_not_found", ws_lang)})
             return
 
-        print(f"🔵 InterviewSession oluşturuluyor...\n")
-        session = InterviewSession(interview, profile=profile_data)
-        print(f"🔵 InterviewSession oluşturuldu: domain={session.domain}, language={session.language}\n")
-        logger.info(f"✅ Session oluşturuldu: domain={session.domain}, language={session.language}")
+        iv_lang = interview.language or "en"
+        if interview.status == "preparing":
+            await websocket.send_json({"type": "error", "message": _("ws_not_ready", iv_lang)})
+            return
+        if interview.status == "preparation_failed":
+            await websocket.send_json({"type": "error", "message": _("ws_prep_failed", iv_lang)})
+            return
+
+        print(f"🔵 Creating InterviewSession...\n")
+        session = InterviewSession(interview, profile=profile_data, prepared_questions=interview_questions)
+        print(f"🔵 InterviewSession created: domain={session.domain}, language={session.language}\n")
+        logger.info(f"✅ Session created: domain={session.domain}, language={session.language}")
     except Exception as e:
         print(f"\n❌❌❌ EXCEPTION: {e}\n")
         import traceback
         print(f"\n{traceback.format_exc()}\n")
-        logger.error(f"❌ WebSocket setup hatası: {e}", exc_info=True)
+        logger.error(f"❌ WebSocket setup error: {e}", exc_info=True)
         try:
-            await websocket.send_json({"type": "error", "message": f"Setup hatası: {str(e)}"})
+            await websocket.send_json({"type": "error", "message": f"{_('interview_not_found', ws_lang)}: {str(e)}"})
         except:
             pass
         return
     finally:
-        print(f"🔵 Finally bloğu: db.close() çağrılıyor\n")
+        print(f"🔵 Finally block: calling db.close()\n")
         db.close()
 
     async def safe_send(payload: dict) -> bool:
@@ -435,14 +525,14 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
             status_db.close()
 
     try:
-        print(f"\n🟢🟢🟢 MAIN LOOP BAŞLADI: interview_id={interview_id} 🟢🟢🟢\n")
+        print(f"\n🟢🟢🟢 MAIN LOOP STARTED: interview_id={interview_id} 🟢🟢🟢\n")
         logger.info(f"Interview session started: interview_id={interview_id}")
 
         while True:
             try:
-                print(f"🟢 Message bekleniyor...\n")
+                print(f"🟢 Waiting for message...\n")
                 raw = await websocket.receive_text()
-                print(f"🟢 Message alındı: {raw[:100]}\n")
+                print(f"🟢 Message received: {raw[:100]}\n")
                 data = json.loads(raw)
             except json.JSONDecodeError as e:
                 print(f"🔴 JSON decode error: {e}\n")
@@ -460,11 +550,23 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
             print(f"🟢 Message type: {msg_type}\n")
 
             if msg_type == "init":
-                print(f"🟢 Init mesajı işleniyor\n")
+                print(f"🟢 Processing init message\n")
                 session.domain = data.get("domain", session.domain)
                 session.language = data.get("language", session.language)
-                session.max_questions = data.get("max_questions", 5)
+                session.base_questions = data.get("max_questions", 7)
+                session.max_questions = max(session.min_questions, min(session.base_questions, session.max_questions))
                 session.answer_count = 0
+                # Clear any previous answers for this interview (in case of reconnection/restart)
+                try:
+                    answer_db = SessionLocal()
+                    answer_db.query(models.InterviewAnswer).filter(
+                        models.InterviewAnswer.interview_id == interview_id
+                    ).delete()
+                    answer_db.commit()
+                    answer_db.close()
+                    logger.info(f"Cleared previous answers for interview {interview_id}")
+                except Exception as e:
+                    logger.warning(f"Could not clear previous answers: {e}")
                 update_interview_status("in_progress", "ws_init")
 
                 greeting = session.get_greeting()
@@ -478,33 +580,44 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                     break
 
             elif msg_type == "audio":
-                print(f"🟢 Audio mesajı işleniyor\n")
+                print(f"🟢 Processing audio message\n")
                 audio_b64 = data.get("audio")
                 if not audio_b64:
-                    print(f"🔴 Audio verisi yok\n")
+                    print(f"🔴 No audio data\n")
                     continue
 
                 try:
-                    print(f"🟢 Transcript oluşturuluyor...\n")
+                    print(f"🟢 Generating transcript...\n")
                     tm = _transcribe_pcm_b64_with_metrics(audio_b64, language=session.language)
                     transcript = (tm.get("text") or "").strip()
                     print(f"🟢 Transcript: {transcript[:50]}\n")
 
                     if not transcript:
-                        print(f"🔴 Transcript boş\n")
-                        await safe_send({
-                            "type": "error",
-                            "message": "Cevap net algılanamadı. Daha net konuşup tekrar deneyin.",
-                        })
+                        print(f"🔴 Transcript empty, AI asking again\n")
+                        re_prompt = (
+                            "The candidate's answer was not audible. "
+                            "Politely ask them to repeat in a short, natural way."
+                        )
+                        re_ask = session._ask_ollama(re_prompt)
+                        if not re_ask:
+                            re_ask = "I couldn't hear you clearly, could you please repeat that?"
+                        if not await safe_send({
+                            "type": "question",
+                            "question": re_ask,
+                            "q_num": session.answer_count + 1,
+                            "total": session.max_questions,
+                            "phase": session.phase,
+                        }):
+                            break
                         continue
 
                     logger.info(f"Transcription: {transcript[:100]}...")
 
                     # Save answer to database BEFORE handle_answer increments counter
-                    print(f"🟢 Database session açılıyor\n")
+                    print(f"🟢 Opening database session\n")
                     db = SessionLocal()
                     try:
-                        print(f"🟢 Cevap kaydediliyor\n")
+                        print(f"🟢 Saving answer\n")
                         # answer_count will be incremented in handle_answer, so use current value
                         current_q_num = session.answer_count + 1  # Next question number (since we increment in handle_answer)
                         question_text = interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
@@ -516,12 +629,10 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                             answer_text=transcript,
                             speech_rate_wpm=tm.get("speech_rate_wpm"),
                             pause_frequency_score=tm.get("pause_frequency_score"),
-                            volume_stability_score=tm.get("volume_stability_score"),
-                            tone_variation_score=tm.get("tone_variation_score"),
                         )
                         db.add(answer_record)
                         db.commit()
-                        print(f"🟢 Cevap kaydedildi: {current_q_num}\n")
+                        print(f"🟢 Answer saved: {current_q_num}\n")
                         logger.info(f"Saved answer {current_q_num} to database")
                     except Exception as save_error:
                         print(f"🔴 Save error: {save_error}\n")
@@ -529,18 +640,18 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                     finally:
                         db.close()
 
-                    print(f"🟢 handle_answer çağrılıyor\n")
+                    print(f"🟢 Calling handle_answer\n")
                     response_text, is_ended = session.handle_answer(transcript)
-                    print(f"🟢 handle_answer tamamlandı: is_ended={is_ended}\n")
+                    print(f"🟢 handle_answer completed: is_ended={is_ended}\n")
 
                     if is_ended:
-                        print(f"🟢 Mülakat bitmiş!\n")
-                        update_interview_status("completed", "ws_auto_end")
+                        print(f"🟢 Interview ended!\n")
+                        update_interview_status("analyzing", "ws_auto_end")
 
-                        print(f"🟢 Ended mesajı gönderiliyor\n")
+                        print(f"🟢 Sending ended message\n")
                         if not await safe_send({
                             "type": "ended",
-                            "message": "Mülakat tamamlandı. Teşekkür ederiz.",
+                            "message": _("ws_completed", session.language),
                             "question": response_text,
                             "q_num": session.question_count,
                             "total": session.max_questions,
@@ -549,7 +660,7 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                             break
                         break
 
-                    print(f"🟢 Sonraki soru gönderiliyor: q_num={session.question_count}\n")
+                    print(f"🟢 Sending next question: q_num={session.question_count}\n")
                     if not await safe_send({
                         "type": "question",
                         "question": response_text,
@@ -558,9 +669,9 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                         "total": session.max_questions,
                         "phase": session.phase,
                     }):
-                        print(f"🔴 safe_send başarısız\n")
+                        print(f"🔴 safe_send failed\n")
                         break
-                    print(f"🟢 Soru gönderildi!\n")
+                    print(f"🟢 Question sent!\n")
 
                 except Exception as e:
                     print(f"🔴 Audio processing exception: {e}\n")
@@ -571,7 +682,7 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                         break
 
             elif msg_type == "test_answer":
-                print(f"🟢 Test answer mesajı işleniyor\n")
+                print(f"🟢 Processing test answer message\n")
                 transcript = (data.get("text") or "").strip()
                 if not transcript:
                     transcript = f"Dummy answer {session.answer_count + 1}: Silent test response."
@@ -600,14 +711,13 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                     response_text, is_ended = session.handle_answer(transcript)
 
                     if is_ended:
-                        update_interview_status("completed", "ws_test_auto_end")
+                        update_interview_status("analyzing", "ws_test_auto_end")
                         if not await safe_send({
                             "type": "ended",
-                            "message": "Mülakat tamamlandı. Teşekkür ederiz.",
+                            "message": _("ws_completed", session.language),
                             "question": response_text,
                             "q_num": session.question_count,
                             "total": session.max_questions,
-                            "transcript": transcript,
                         }):
                             break
                         break
@@ -629,16 +739,16 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
 
             elif msg_type == "end":
                 if session.phase != InterviewSession.PHASE_ENDED:
-                    closing, _ = session.handle_answer("")
+                    closing, _ended = session.handle_answer("")
                     await safe_send({
                         "type": "ended",
-                        "message": "Mülakat bitti.",
+                        "message": _("ws_ended", session.language),
                         "question": closing,
                         "q_num": session.question_count,
                         "total": session.max_questions,
                     })
 
-                update_interview_status("completed", "ws_user_end")
+                update_interview_status("analyzing", "ws_user_end")
 
                 break
 

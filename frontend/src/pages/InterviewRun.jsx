@@ -1,15 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 
-<<<<<<< Updated upstream
-const API = '/api'
-=======
-const API = import.meta.env.VITE_API_URL || '/api'
-const SILENCE_SEND_MS = 2200
-const LOW_MODE_SILENCE_SEND_MS = 3000
+import { API } from '../api'
+const SILENCE_SEND_MS = 1200
 const MIC_RMS_THRESHOLD = 0.006
 const MIN_CHUNKS_TO_SEND = 3
-const LOW_MODE_MIN_CHUNKS_TO_SEND = 5
 
 function floatChunksToBase64Int16(chunks) {
   const length = chunks.reduce((sum, arr) => sum + arr.length, 0)
@@ -29,40 +24,26 @@ function floatChunksToBase64Int16(chunks) {
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
   return btoa(binary)
 }
->>>>>>> Stashed changes
 
 export default function InterviewRun() {
   const { id } = useParams()
   const [interview, setInterview] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-<<<<<<< Updated upstream
-  const [currentIndex, setCurrentIndex] = useState(-1) // -1: daha başlamadı
-  const [finishing, setFinishing] = useState(false)
-  const videoRef = useRef(null)
-  const streamRef = useRef(null)
-=======
+  const [retrying, setRetrying] = useState(false)
+  const [showLeaveModal, setShowLeaveModal] = useState(false)
   const [recording, setRecording] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [aiQuestion, setAiQuestion] = useState('')
   const [questionNum, setQuestionNum] = useState(0)
-  const [totalQuestions] = useState(5)
   const [wsConnected, setWsConnected] = useState(false)
-  const [micStatus, setMicStatus] = useState('Hazır')
+  const [micStatus, setMicStatus] = useState('')
   const [phase, setPhase] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [interviewEnded, setInterviewEnded] = useState(false)
-  const [performanceMode, setPerformanceMode] = useState(() => {
-    if (typeof window === 'undefined') return 'normal'
-    return localStorage.getItem('interviewPerformanceMode') || 'normal'
-  })
-  const [silentTestMode, setSilentTestMode] = useState(() => {
-    if (typeof window === 'undefined') return false
-    return localStorage.getItem('interviewSilentTestMode') === 'true'
-  })
   const isProcessingRef = useRef(false)
   const interviewEndedRef = useRef(false)
-  const intentionalCloseRef = useRef(false)
+  const leavingRef = useRef(false)
 
   const videoRef = useRef(null)
   const streamRef = useRef(null)
@@ -75,29 +56,67 @@ export default function InterviewRun() {
   const muteGainRef = useRef(null)
   const speechBlockedRef = useRef(false)
   const sendTimerRef = useRef(null)
-  const autoAnswerTimerRef = useRef(null)
   const pendingChunksRef = useRef([])
->>>>>>> Stashed changes
+  const tRef = useRef(null)
+  const reconnectTimerRef = useRef(null)
 
   const navigate = useNavigate()
   const token = localStorage.getItem('token')
-  const silenceWindowMs = performanceMode === 'low' ? LOW_MODE_SILENCE_SEND_MS : SILENCE_SEND_MS
-  const minChunksToSend = performanceMode === 'low' ? LOW_MODE_MIN_CHUNKS_TO_SEND : MIN_CHUNKS_TO_SEND
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('interviewPerformanceMode', performanceMode)
+    if (!recording) return
+    const handleBeforeUnload = (e) => {
+      e.preventDefault()
+      e.returnValue = tRef.current.leaveWarning
+      return e.returnValue
     }
-  }, [performanceMode])
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [recording])
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('interviewSilentTestMode', silentTestMode ? 'true' : 'false')
-    }
-  }, [silentTestMode])
+  const t = {
+    loading: 'Loading...',
+    notFound: 'Interview not found',
+    fetchError: 'Could not fetch interview',
+    fetchInfoError: 'Could not load',
+    camDenied: 'Camera and microphone permission denied. Cannot start interview.',
+    noVideoSupport: 'Your browser does not support video recording.',
+    greeting: 'AI is greeting you...',
+    listeningDesc: 'AI is listening. Answer and press send.',
+    closing: 'Interview closing phase...',
+    completed: 'Interview completed.',
+    reading: 'AI is reading...',
+    listening: '🔊 Listening...',
+    speechDetected: '🎤 Speech detected',
+    tooShort: 'Too short',
+    sentThinking: 'Sent, processing...',
+    wsError: 'Connection error',
+    wsConnError: 'Could not connect to AI',
+    recording: '● Recording...',
+    uploading: 'Video uploading, please do not close the page...',
+    ready: 'INTERVIEW READY',
+    permissionDesc: 'We will ask for camera and microphone permission. Questions will appear on screen one by one while recording. You can start the interview when ready.',
+    startBtn: 'Start interview',
+    later: 'Later',
+    preparing: 'INTERVIEW PREPARING',
+    preparingDesc: 'Your interview is being prepared. Company research and question generation in progress. This may take a few seconds. Please wait...',
+    preparationFailed: 'Preparation failed. Please try again.',
+    backToDashboard: 'Back to dashboard',
+    retryPrep: 'Retry',
+    retrying: 'Retrying...',
+    reconnectWarning: 'You previously left this interview. If you press start, the interview will restart from the beginning.',
+    connecting: 'AI connecting, first question preparing...',
+    questionLabel: 'Question #',
+    aiConnected: '● AI connected',
+    thinking: '⏳ AI thinking...',
+    sendBtn: '📤 Send',
+    redirecting: 'Redirecting to results page...',
+    leaveWarning: 'If you leave the interview, you will need to start over. Are you sure?',
+    leaveConfirm: 'Leave Interview',
+    leaveCancel: 'Continue',
+  }
+  tRef.current = t
 
-<<<<<<< Updated upstream
-=======
   const stopSpeaking = useCallback(() => {
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel()
@@ -111,9 +130,8 @@ export default function InterviewRun() {
       sendTimerRef.current = null
     }
     if (!pendingChunksRef.current.length) return
-    if (pendingChunksRef.current.length < minChunksToSend) {
+    if (pendingChunksRef.current.length < MIN_CHUNKS_TO_SEND) {
       pendingChunksRef.current = []
-      setMicStatus('Cevap çok kısa, biraz daha konuş')
       return
     }
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
@@ -126,28 +144,27 @@ export default function InterviewRun() {
       wsRef.current.send(JSON.stringify({ type: 'audio', audio: base64 }))
       setIsProcessing(true)
       isProcessingRef.current = true
-      setMicStatus('Cevap gönderildi, AI düşünüyor...')
+      setMicStatus(tRef.current.sentThinking)
     } catch (e) {
       console.error('WS send failed:', e)
     }
-  }, [minChunksToSend])
+  }, [])
 
   const connectWebSocket = useCallback(() => {
-    const apiUrl = API.replace('/api', '').replace(/\/$/, '')
-    const hostPart = apiUrl.replace(/^http(s)?:\/\//, '')
-    const proto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const wsUrl = `${proto}://${hostPart}/ws/interview/${id}`
+    const token = localStorage.getItem('token')
+    const loc = window.location
+    const proto = loc.protocol === 'https:' ? 'wss' : 'ws'
+    const wsUrl = `${proto}://${loc.host}/ws/interview/${id}?token=${token}`
 
     const ws = new WebSocket(wsUrl)
-    intentionalCloseRef.current = false
     ws.onopen = () => {
       setWsConnected(true)
       ws.send(
         JSON.stringify({
           type: 'init',
           domain: interview?.domain || 'general',
-          language: interview?.language || 'tr',
-          max_questions: 5,
+          language: 'en',
+          max_questions: 7,
         }),
       )
     }
@@ -160,78 +177,76 @@ export default function InterviewRun() {
           setPhase(data.phase || 'questions')
           setIsProcessing(false)
           isProcessingRef.current = false
-          setMicStatus('Soru okunuyor...')
-          if (silentTestMode && wsRef.current?.readyState === WebSocket.OPEN) {
-            if (autoAnswerTimerRef.current) clearTimeout(autoAnswerTimerRef.current)
-            autoAnswerTimerRef.current = setTimeout(() => {
-              if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
-              if (interviewEndedRef.current || isProcessingRef.current) return
-              try {
-                wsRef.current.send(JSON.stringify({
-                  type: 'test_answer',
-                  text: `Sessiz test cevabı ${data.q_num || questionNum || 1}`,
-                }))
-                setIsProcessing(true)
-                isProcessingRef.current = true
-                setMicStatus('Sessiz test cevabı gönderildi...')
-              } catch (e) {
-                console.error('Test answer send failed:', e)
-              }
-            }, 900)
-            return
-          }
-
-          if (performanceMode !== 'low' && data.question && typeof window !== 'undefined' && window.speechSynthesis) {
+          setMicStatus(tRef.current.reading)
+          if (data.question && typeof window !== 'undefined' && window.speechSynthesis && !leavingRef.current) {
             speechBlockedRef.current = true
             window.speechSynthesis.cancel()
             const u = new SpeechSynthesisUtterance(data.question)
-            u.lang = (interview?.language || 'tr') === 'en' ? 'en-US' : 'tr-TR'
+            u.lang = 'en-US'
             u.rate = 0.92
             u.onend = () => {
               speechBlockedRef.current = false
-              setMicStatus('Dinliyorum...')
+              setMicStatus(tRef.current.listening)
             }
             u.onerror = () => {
               speechBlockedRef.current = false
-              setMicStatus('Dinliyorum...')
+              setMicStatus(tRef.current.listening)
+            }
+            window.speechSynthesis.speak(u)
+          } else if (!leavingRef.current) {
+            setMicStatus(tRef.current.listening)
+          }
+        } else if (data.type === 'ended') {
+          setInterviewEnded(true)
+          interviewEndedRef.current = true
+          setAiQuestion(data.question || data.message || tRef.current.completed)
+          setMicStatus(tRef.current.completed)
+          setIsProcessing(false)
+          isProcessingRef.current = false
+          setPhase('closing')
+
+          const closingText = data.question || data.message || tRef.current.completed
+          if (closingText && typeof window !== 'undefined' && window.speechSynthesis && !leavingRef.current) {
+            speechBlockedRef.current = true
+            window.speechSynthesis.cancel()
+            const u = new SpeechSynthesisUtterance(closingText)
+            u.lang = 'en-US'
+            u.rate = 0.92
+            u.onend = () => {
+              speechBlockedRef.current = false
+              setTimeout(() => { stopAndUploadVideo() }, 1000)
+            }
+            u.onerror = () => {
+              speechBlockedRef.current = false
+              setTimeout(() => { stopAndUploadVideo() }, 1000)
             }
             window.speechSynthesis.speak(u)
           } else {
-            setMicStatus('Dinliyorum...')
+            setTimeout(() => { stopAndUploadVideo() }, 1500)
           }
-        } else if (data.type === 'ended') {
-          intentionalCloseRef.current = true
-          setInterviewEnded(true)
-          interviewEndedRef.current = true
-          setAiQuestion(data.question || data.message || 'Mülakat tamamlandı.')
-          setMicStatus('Mülakat tamamlandı')
-          setIsProcessing(false)
-          isProcessingRef.current = false
-          setTimeout(() => {
-            stopAndUploadVideo()
-          }, 1500)
         } else if (data.type === 'error') {
-          setError(data.message || 'WebSocket hatası')
+          setError(data.message || tRef.current.wsError)
           setIsProcessing(false)
           isProcessingRef.current = false
         }
       } catch {
-        // yoksay parse hatası
+        // ignore parse errors
       }
     }
     ws.onclose = () => {
       setWsConnected(false)
-      if (!intentionalCloseRef.current && !interviewEndedRef.current) {
-        setError('WebSocket bağlantısı beklenmedik şekilde kapandı')
+      if (!interviewEndedRef.current) {
+        reconnectTimerRef.current = setTimeout(() => connectWebSocket(), 3000)
       }
     }
     ws.onerror = () => {
-      if (!intentionalCloseRef.current && !interviewEndedRef.current) {
-        setError('WebSocket bağlantı hatası')
+      if (!interviewEndedRef.current) {
+        setError(tRef.current.wsConnError)
+        ws.close()
       }
     }
     wsRef.current = ws
-  }, [id, interview?.domain, interview?.language, performanceMode, silentTestMode, questionNum])
+  }, [id, interview?.domain])
 
   const startAudioCapture = useCallback(() => {
     if (!streamRef.current) return
@@ -262,7 +277,7 @@ export default function InterviewRun() {
 
       if (rms > MIC_RMS_THRESHOLD) {
         pendingChunksRef.current.push(new Float32Array(input))
-        setMicStatus('Konuşma algılandı')
+        setMicStatus(tRef.current.speechDetected)
         if (sendTimerRef.current) {
           clearTimeout(sendTimerRef.current)
           sendTimerRef.current = null
@@ -271,12 +286,11 @@ export default function InterviewRun() {
         if (sendTimerRef.current) clearTimeout(sendTimerRef.current)
         sendTimerRef.current = setTimeout(() => {
           sendPendingAudio()
-        }, silenceWindowMs)
+        }, SILENCE_SEND_MS)
       }
     }
-  }, [sendPendingAudio, silenceWindowMs])
+  }, [sendPendingAudio])
 
->>>>>>> Stashed changes
   useEffect(() => {
     if (!token) {
       navigate('/login')
@@ -288,102 +302,94 @@ export default function InterviewRun() {
     })
       .then((res) => {
         if (res.status === 401 || res.status === 403) navigate('/login')
-        if (!res.ok) throw new Error('Mülakat alınamadı')
+        if (!res.ok) throw new Error(t.fetchError)
         return res.json()
       })
       .then(setInterview)
-      .catch(() => setError('Mülakat bilgisi alınamadı'))
+      .catch(() => setError(t.fetchInfoError))
       .finally(() => setLoading(false))
   }, [id, token, navigate])
 
-  useEffect(() => {
-    // Sayfa kapanırken stream varsa durdur
-    return () => {
-<<<<<<< Updated upstream
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop())
+  const isPreparing = interview?.status === 'preparing' || interview?.status === 'created'
+
+  const handleRetryPrep = async () => {
+    setRetrying(true)
+    setError('')
+    try {
+      const res = await fetch(`${API}/interviews/${id}/retry-prep`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setError(data.detail || 'Retry failed')
+        setRetrying(false)
+        return
       }
-=======
-      intentionalCloseRef.current = true
+      setInterview((prev) => (prev ? { ...prev, status: 'preparing', preparation_error: null } : prev))
+    } catch {
+      setError('Connection error')
+      setRetrying(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!isPreparing || !id) return
+    const interval = setInterval(() => {
+      fetch(`${API}/interviews/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .then((data) => {
+          setInterview(data)
+          if (data.status !== 'preparing' && data.status !== 'created') clearInterval(interval)
+        })
+        .catch(() => {})
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [isPreparing, id, token])
+
+  useEffect(() => {
+    return () => {
       stopSpeaking()
       if (wsRef.current) {
         try {
           if (wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.close()
           }
-        } catch (e) { /* yoksay */ }
+        } catch (e) { /* ignore */ }
       }
       if (sendTimerRef.current) clearTimeout(sendTimerRef.current)
-      if (autoAnswerTimerRef.current) clearTimeout(autoAnswerTimerRef.current)
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try { mediaRecorderRef.current.stop() } catch { /* yoksay */ }
+        try { mediaRecorderRef.current.stop() } catch { /* ignore */ }
       }
       if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop())
-      if (processorRef.current) { try { processorRef.current.disconnect() } catch { /* yoksay */ } }
-      if (sourceRef.current) { try { sourceRef.current.disconnect() } catch { /* yoksay */ } }
-      if (muteGainRef.current) { try { muteGainRef.current.disconnect() } catch { /* yoksay */ } }
-      if (audioContextRef.current) { try { audioContextRef.current.close() } catch { /* yoksay */ } }
->>>>>>> Stashed changes
+      if (processorRef.current) { try { processorRef.current.disconnect() } catch { /* ignore */ } }
+      if (sourceRef.current) { try { sourceRef.current.disconnect() } catch { /* ignore */ } }
+      if (muteGainRef.current) { try { muteGainRef.current.disconnect() } catch { /* ignore */ } }
+      if (audioContextRef.current) { try { audioContextRef.current.close() } catch { /* ignore */ } }
     }
   }, [])
+
+  useEffect(() => {
+    if (recording && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current
+      videoRef.current.play()
+    }
+  }, [recording])
 
   async function handleStart() {
     setError('')
     try {
-<<<<<<< Updated upstream
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      })
-=======
-      const mediaConstraints = performanceMode === 'low'
-        ? {
-            video: {
-              width: { ideal: 640 },
-              height: { ideal: 360 },
-              frameRate: { ideal: 15, max: 20 },
-            },
-            audio: !silentTestMode,
-          }
-        : {
-            video: {
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-              frameRate: { ideal: 30, max: 30 },
-            },
-            audio: !silentTestMode,
-          }
-      let stream
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(mediaConstraints)
-      } catch (mediaErr) {
-        if (performanceMode === 'low') {
-          console.warn('Low mode media constraints failed, falling back to default:', mediaErr)
-          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: !silentTestMode })
-        } else {
-          throw mediaErr
-        }
-      }
->>>>>>> Stashed changes
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       streamRef.current = stream
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        videoRef.current.play()
-      }
-<<<<<<< Updated upstream
-      setCurrentIndex(0)
-=======
 
       recordedChunksRef.current = []
       let recorder
       try {
-        recorder = new MediaRecorder(stream, {
-          mimeType: 'video/webm;codecs=vp8',
-          videoBitsPerSecond: performanceMode === 'low' ? 450000 : 1500000,
-        })
+        recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8' })
       } catch (recErr) {
-        console.error('MediaRecorder başlatılamadı:', recErr)
-        setError('Tarayıcın video kaydını desteklemiyor. Lütfen Chrome veya Edge ile dene.')
+        console.error('MediaRecorder could not start:', recErr)
+        setError(t.noVideoSupport)
         return
       }
 
@@ -396,38 +402,22 @@ export default function InterviewRun() {
 
       pendingChunksRef.current = []
       connectWebSocket()
-      if (!silentTestMode) {
-        setTimeout(() => startAudioCapture(), 500)
-      } else {
-        setMicStatus('Sessiz test modu aktif')
-      }
->>>>>>> Stashed changes
+      setTimeout(() => startAudioCapture(), 500)
     } catch (e) {
-      console.error('Media start error:', e)
-      setError('Kamera ve mikrofon izni verilmedi. Mülakat başlatılamadı.')
+      console.error('getUserMedia error:', e)
+      setError(t.camDenied)
     }
   }
 
-<<<<<<< Updated upstream
-  async function handleNext() {
-    if (!interview?.questions) return
-    const nextIndex = currentIndex + 1
-    if (nextIndex < interview.questions.length) {
-      setCurrentIndex(nextIndex)
-    } else {
-      // Mülakat bitti
-      setFinishing(true)
-=======
   async function stopAndUploadVideo() {
     if (uploading || interviewEnded) return
-    intentionalCloseRef.current = true
     setUploading(true)
+    setRecording(false)
 
     const recorder = mediaRecorderRef.current
-    setRecording(false)
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'end' }))
-      wsRef.current.close()
+      try { wsRef.current.send(JSON.stringify({ type: 'end' })) } catch { /* ignore */ }
+      try { wsRef.current.close() } catch { /* ignore */ }
     }
 
     if (recorder && recorder.state !== 'inactive') {
@@ -442,265 +432,182 @@ export default function InterviewRun() {
       const blob = new Blob(chunks, { type: 'video/webm' })
       const formData = new FormData()
       formData.append('file', blob, 'interview.webm')
-
->>>>>>> Stashed changes
-      try {
-        await fetch(`${API}/interviews/${id}/status`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ status: 'completed' }),
-        })
-      } catch {
-        // hata olsa bile kullanıcıya çok yansıtma, loglamak yeter
-      } finally {
-        // Kamerayı kapat
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((t) => t.stop())
-        }
-        setTimeout(() => {
-          navigate(`/interview/${id}/sonuc`)
-        }, 1500)
-      }
+      // Upload in background, navigate to dashboard without waiting
+      fetch(`${API}/interviews/${id}/video`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      }).catch((e) => console.warn('Video upload failed:', e))
     }
+
+    navigate('/dashboard')
   }
 
   if (!token) return null
-  if (loading) return <div style={{ padding: '2rem' }}>Yükleniyor...</div>
-  if (error || !interview) return <div style={{ padding: '2rem', color: 'red' }}>{error || 'Mülakat bulunamadı'}</div>
+  if (loading) return <div style={{ padding: '2rem' }}>{t.loading}</div>
+  if (error || !interview) return <div style={{ padding: '2rem', color: 'red' }}>{error || t.notFound}</div>
 
-  const questions = interview.questions || []
-  const total = questions.length
-  const currentQuestion = currentIndex >= 0 && currentIndex < total ? questions[currentIndex] : null
+  const isFailed = interview.status === 'preparation_failed'
+  const isInProgress = interview.status === 'in_progress'
+  const isAnalyzing = interview.status === 'analyzing'
+  const isAnalyzed = interview.status === 'analyzed'
+  const isAnalysisFailed = interview.status === 'analysis_failed'
+
+  if (isAnalyzing || isAnalyzed || isAnalysisFailed) {
+    navigate(`/interview/${id}/sonuc`)
+    return null
+  }
+
+  const cardStyle = {
+    maxWidth: 420, width: '100%', margin: '0 1.5rem', padding: '2.25rem 2rem',
+    borderRadius: 16, background: '#fff', boxShadow: '0 24px 60px rgba(15,23,42,0.4)', textAlign: 'center',
+  }
+  const outerStyle = {
+    minHeight: '100vh', background: 'rgba(15,23,42,0.85)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  }
+
+  if (isPreparing) {
+    return (
+      <div style={outerStyle}>
+        <div style={cardStyle}>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          <p style={{ fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '0.75rem' }}>{t.preparing}</p>
+          <h1 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#111', marginBottom: '0.25rem', lineHeight: 1.2 }}>{interview.title}</h1>
+          <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1.5rem' }}>{interview.domain} &middot; {interview.language}</p>
+          <p style={{ fontSize: '0.95rem', color: '#4b5563', marginBottom: '1.5rem', lineHeight: 1.6 }}>{t.preparingDesc}</p>
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <div style={{ width: 32, height: 32, borderRadius: '50%', border: '3px solid #e5e7eb', borderTopColor: '#111', animation: 'spin 0.8s linear infinite' }} />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (isFailed) {
+    return (
+      <div style={outerStyle}>
+        <div style={cardStyle}>
+          <p style={{ fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#dc2626', marginBottom: '0.75rem' }}>&#10005;</p>
+          <h1 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#111', marginBottom: '0.25rem', lineHeight: 1.2 }}>{interview.title}</h1>
+          <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1.5rem' }}>{interview.domain} &middot; {interview.language}</p>
+          <p style={{ fontSize: '0.95rem', color: '#dc2626', marginBottom: '1.5rem', lineHeight: 1.6 }}>{t.preparationFailed}</p>
+          {error && <p style={{ color: '#dc2626', fontSize: '0.9rem', marginBottom: '1rem' }}>{error}</p>}
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+            <button
+              type="button"
+              onClick={handleRetryPrep}
+              disabled={retrying}
+              style={{
+                padding: '0.85rem 1.9rem', background: retrying ? '#9ca3af' : '#111', color: '#fff',
+                borderRadius: 999, fontWeight: 500, fontSize: '1rem', border: 'none',
+                cursor: retrying ? 'not-allowed' : 'pointer', display: 'inline-block',
+              }}
+            >
+              {retrying ? t.retrying : t.retryPrep}
+            </button>
+            <Link to="/dashboard" style={{ padding: '0.85rem 1.9rem', background: '#fff', color: '#111', textDecoration: 'none', borderRadius: 999, fontWeight: 500, fontSize: '1rem', display: 'inline-block', border: '1px solid #e5e7eb' }}>{t.backToDashboard}</Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!recording && !interviewEnded) {
+    return (
+      <div style={outerStyle}>
+        <div style={cardStyle}>
+          <p style={{ fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '0.75rem' }}>{t.ready}</p>
+          <h1 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#111', marginBottom: '0.25rem', lineHeight: 1.2 }}>{interview.title}</h1>
+          <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1.5rem' }}>{interview.domain} &middot; {interview.language}</p>
+          <p style={{ fontSize: '0.95rem', color: '#4b5563', marginBottom: '1.5rem', lineHeight: 1.6 }}>{t.permissionDesc}</p>
+          {isInProgress && (
+            <p style={{ fontSize: '0.85rem', color: '#f59e0b', marginBottom: '1rem', lineHeight: 1.5, background: '#fffbeb', padding: '0.75rem', borderRadius: 8 }}>{t.reconnectWarning}</p>
+          )}
+          {error && <p style={{ color: '#dc2626', fontSize: '0.9rem', marginBottom: '1rem' }}>{error}</p>}
+          <button
+            type="button"
+            onClick={handleStart}
+            style={{
+              padding: '0.85rem 1.9rem', background: '#111', color: '#fff', textDecoration: 'none',
+              borderRadius: 999, fontWeight: 500, fontSize: '1rem', border: 'none', cursor: 'pointer',
+              display: 'inline-block', minWidth: 190,
+            }}
+          >
+            {t.startBtn}
+          </button>
+          <div style={{ marginTop: '1.25rem', fontSize: '0.85rem' }}>
+            <Link to="/dashboard" style={{ color: '#6b7280', textDecoration: 'underline' }}>{t.later}</Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5' }}>
-      <header style={{
-        background: '#fff',
-        borderBottom: '1px solid #e5e7eb',
-        padding: '0.75rem 1.5rem',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}>
-        <Link to="/dashboard" style={{ fontSize: '1.25rem', fontWeight: 600, color: '#111', textDecoration: 'none' }}>
-          Mülakat Simülasyonu
-        </Link>
-        <span style={{ fontSize: '0.95rem', color: '#6b7280' }}>
-          {interview.title}
-        </span>
-      </header>
-
-      <main style={{ maxWidth: 960, margin: '0 auto', padding: '2rem 1.5rem', display: 'grid', gap: '1.5rem', gridTemplateColumns: '2fr 3fr' }}>
-        {/* Sol: video alanı */}
-        <section style={{ background: '#000', borderRadius: 12, overflow: 'hidden', minHeight: 240 }}>
-          <video
-            ref={videoRef}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            autoPlay
-            muted
-          />
+      {recording && !interviewEnded && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, background: '#111', color: '#fff', padding: '0.5rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 100 }}>
+          <span style={{ fontSize: '0.85rem' }}>● {t.recording}</span>
+          <button type="button" onClick={() => setShowLeaveModal(true)} style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6, padding: '0.3rem 0.75rem', cursor: 'pointer', fontSize: '0.85rem' }}>{t.leaveConfirm}</button>
+        </div>
+      )}
+      <main style={{ maxWidth: 1100, margin: '0 auto', padding: recording && !interviewEnded ? '3.5rem 1.5rem 2rem' : '2rem 1.5rem', display: 'grid', gap: '1.5rem', gridTemplateColumns: '3fr 2fr' }}>
+        <section style={{ background: '#000', borderRadius: 12, overflow: 'hidden', minHeight: 320 }}>
+          <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} autoPlay muted />
         </section>
 
-        {/* Sağ: sorular */}
-        <section style={{ background: '#fff', borderRadius: 12, padding: '1.5rem' }}>
-          <h1 style={{ fontSize: '1.4rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-            Mülakat
-          </h1>
-          <p style={{ fontSize: '0.95rem', color: '#6b7280', marginBottom: '1rem' }}>
-            Sorular sırayla gösterilecek. Her soruya kameraya bakarak yanıt ver.
-          </p>
-
-<<<<<<< Updated upstream
-          {error && <p style={{ color: '#dc2626', fontSize: '0.9rem' }}>{error}</p>}
-=======
-          <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', border: '1px solid #e5e7eb' }}>
-            <h1 style={{ fontSize: '1.3rem', fontWeight: 600, marginBottom: '0.5rem' }}>Mülakat</h1>
-            <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '0.75rem' }}>
-              {silentTestMode
-                ? 'Sessiz test modunda sorular otomatik olarak test cevabı ile ilerletilir.'
-                : `Konuşmanızı algıladıktan ~${Math.round(silenceWindowMs / 1000)}sn sonra cevabınız otomatik gönderilir.`}
-            </p>
->>>>>>> Stashed changes
-
-          {currentIndex === -1 && (
-            <>
-              <p style={{ marginBottom: '1rem', fontSize: '0.95rem' }}>
-                Başlamadan önce kamera ve mikrofon izni isteyeceğiz.
-              </p>
-              <button
-                type="button"
-                onClick={handleStart}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  background: '#111',
-                  color: '#fff',
-                  borderRadius: 8,
-                  border: 'none',
-                  fontWeight: 500,
-                  fontSize: '1rem',
-                  cursor: 'pointer',
-                }}
-              >
-                Mülakata başla
-              </button>
-            </>
-          )}
-
-<<<<<<< Updated upstream
-          {currentIndex >= 0 && currentQuestion && (
-            <>
-              <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '0.5rem' }}>
-                Soru {currentIndex + 1} / {total}
-              </p>
-              <div style={{ padding: '1rem', borderRadius: 8, background: '#f3f4f6', marginBottom: '1rem' }}>
-                {currentQuestion.text}
+        <section style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', border: '1px solid #e5e7eb', flex: 1, display: 'flex', flexDirection: 'column' }}>
+            {recording && !aiQuestion && (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <p style={{ fontSize: '0.95rem', color: '#6b7280' }}>{t.connecting}</p>
               </div>
-              <button
-                type="button"
-                onClick={handleNext}
-                disabled={finishing}
-                style={{
-                  padding: '0.75rem 1.5rem',
-                  background: '#111',
-                  color: '#fff',
-                  borderRadius: 8,
-                  border: 'none',
-                  fontWeight: 500,
-                  fontSize: '1rem',
-                  cursor: finishing ? 'not-allowed' : 'pointer',
-                  opacity: finishing ? 0.7 : 1,
-                }}
-              >
-                {currentIndex === total - 1 ? 'Mülakatı bitir' : 'Sonraki soru'}
-              </button>
-              {finishing && (
-                <p style={{ marginTop: '0.75rem', fontSize: '0.9rem', color: '#6b7280' }}>
-                  Mülakat tamamlandı, sonuç sayfasına yönlendiriliyorsunuz…
-=======
-            {!recording && !interviewEnded && (
-              <>
-                <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#f9fafb', borderRadius: 8, border: '1px solid #e5e7eb' }}>
-                  <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.85rem', color: '#4b5563', fontWeight: 600 }}>
-                    Performans Modu
-                  </p>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button
-                      type="button"
-                      onClick={() => setPerformanceMode('normal')}
-                      style={{
-                        padding: '0.45rem 0.8rem',
-                        borderRadius: 8,
-                        border: '1px solid #d1d5db',
-                        background: performanceMode === 'normal' ? '#111' : '#fff',
-                        color: performanceMode === 'normal' ? '#fff' : '#111',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Normal
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPerformanceMode('low')}
-                      style={{
-                        padding: '0.45rem 0.8rem',
-                        borderRadius: 8,
-                        border: '1px solid #d1d5db',
-                        background: performanceMode === 'low' ? '#111' : '#fff',
-                        color: performanceMode === 'low' ? '#fff' : '#111',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Düşük Kaynak
-                    </button>
-                  </div>
-                  <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.8rem', color: '#6b7280' }}>
-                    {performanceMode === 'low'
-                      ? 'Daha düşük video kalite ve daha seyrek ses gönderimi ile cihaz yükünü azaltır.'
-                      : 'Standart kalite ve daha hızlı cevap akışı.'}
-                  </p>
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', fontSize: '0.9rem', color: '#374151' }}>
-                  <input
-                    type="checkbox"
-                    checked={silentTestMode}
-                    onChange={(e) => setSilentTestMode(e.target.checked)}
-                  />
-                  Sessiz test modu (konuşmadan otomatik cevapla)
-                </label>
-                <p style={{ marginBottom: '1rem', fontSize: '0.95rem' }}>
-                  {silentTestMode
-                    ? 'Başlamadan önce kamera izni isteyeceğiz. Mikrofon gerekmez.'
-                    : 'Başlamadan önce kamera ve mikrofon izni isteyeceğiz.'}
->>>>>>> Stashed changes
-                </p>
-              )}
-            </>
-          )}
+            )}
 
-<<<<<<< Updated upstream
-          {currentIndex >= 0 && !currentQuestion && (
-            <p>Mülakat soruları yüklenemedi.</p>
-          )}
-=======
             {recording && aiQuestion && (
               <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <p style={{ fontSize: '0.9rem', color: '#6b7280', margin: 0 }}>
-                    Soru {questionNum || '—'} / {totalQuestions}
-                  </p>
-                  {wsConnected && <p style={{ fontSize: '0.8rem', color: '#16a34a' }}>● AI bağlı</p>}
-                </div>
-                <div style={{ padding: '1rem', borderRadius: 8, background: '#f3f4f6', marginBottom: '0.75rem', whiteSpace: 'pre-wrap' }}>
+                <div style={{ flex: 1, padding: '1rem', borderRadius: 8, background: '#f8fafc', marginBottom: '1rem', whiteSpace: 'pre-wrap', fontSize: '0.95rem', lineHeight: 1.7, color: '#1e293b' }}>
                   {aiQuestion}
                 </div>
-                <p style={{ fontSize: '0.9rem', color: '#6b7280', marginTop: '1rem' }}>
-                  {isProcessing ? '⏳ AI düşünüyor...' : `🎤 ${micStatus}`}
-                </p>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
-                  {!silentTestMode && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                    {isProcessing ? t.thinking : `🎤 ${micStatus}`}
+                  </span>
+                  {!interviewEnded && (
                     <button
                       type="button"
                       onClick={sendPendingAudio}
                       style={{
-                        padding: '0.55rem 0.9rem', background: '#16a34a', color: '#fff', borderRadius: 8,
-                        border: 'none', fontWeight: 500, cursor: 'pointer', flex: 1,
+                        padding: '0.5rem 1rem', background: '#111', color: '#fff', borderRadius: 8,
+                        border: 'none', fontWeight: 500, cursor: 'pointer', fontSize: '0.85rem',
                       }}
                     >
-                      📤 Gönder
+                      {t.sendBtn}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={stopAndUploadVideo}
-                    style={{
-                      padding: '0.55rem 0.9rem', background: '#dc2626', color: '#fff', borderRadius: 8,
-                      border: 'none', fontWeight: 500, cursor: 'pointer',
-                    }}
-                  >
-                    Bitir
-                  </button>
                 </div>
               </>
             )}
 
-            {interviewEnded && (
-              <>
-                <div style={{ padding: '1rem', borderRadius: 8, background: '#e8f5e9', marginBottom: '0.75rem', whiteSpace: 'pre-wrap' }}>
-                  {aiQuestion}
-                </div>
-                <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1rem' }}>
-                  Sonuç sayfasına yönlendiriliyorsunuz...
-                </p>
-              </>
-            )}
+
+            {uploading && <p style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.5rem' }}>{t.uploading}</p>}
+            {error && <p style={{ color: '#dc2626', fontSize: '0.9rem', marginTop: '0.5rem' }}>{error}</p>}
           </div>
->>>>>>> Stashed changes
         </section>
       </main>
+
+      {showLeaveModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: '2rem', maxWidth: 400, textAlign: 'center' }}>
+            <p style={{ fontSize: '1rem', fontWeight: 500, marginBottom: '1rem' }}>{t.leaveWarning}</p>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+              <button onClick={() => setShowLeaveModal(false)} style={{ padding: '0.5rem 1.25rem', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontWeight: 500 }}>{t.leaveCancel}</button>
+              <button onClick={() => { leavingRef.current = true; stopSpeaking(); if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop()); if (wsRef.current) { try { wsRef.current.close() } catch {} } if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') { try { mediaRecorderRef.current.stop() } catch {} } if (audioContextRef.current) { try { audioContextRef.current.close() } catch {} } setShowLeaveModal(false); navigate('/dashboard') }} style={{ padding: '0.5rem 1.25rem', borderRadius: 8, border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer', fontWeight: 500 }}>{t.leaveConfirm}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
-
