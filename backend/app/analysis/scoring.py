@@ -18,9 +18,6 @@ def _normalize_word(word: str) -> str:
     return word.strip(".,!?;:()[]\"'").lower()
 
 
-<<<<<<< Updated upstream
-def score_transcript(transcript: str, duration_seconds: Optional[int] = None) -> Dict[str, object]:
-=======
 def _build_text_feedback_tr(
     total_words: int, filler_ratio: float, overall_score: int
 ) -> tuple[str, str, str]:
@@ -88,7 +85,6 @@ def score_transcript(
     duration_seconds: Optional[int] = None,
     language: str = "tr",
 ) -> Dict[str, object]:
->>>>>>> Stashed changes
     """
     Compute basic metrics, scores and textual feedback from a transcript.
 
@@ -104,7 +100,9 @@ def score_transcript(
     words = [_normalize_word(w) for w in transcript.split() if _normalize_word(w)]
     total_words = len(words)
 
-    filler_count = sum(1 for w in words if w in FILLER_WORDS_TR)
+    lang = (language or "tr").lower()
+    filler_list = FILLER_WORDS_EN if lang.startswith("en") else FILLER_WORDS_TR
+    filler_count = sum(1 for w in words if w in filler_list)
     filler_ratio = filler_count / total_words if total_words else 0.0
 
     # Basit metrikler
@@ -139,7 +137,10 @@ def score_transcript(
         "overall": overall_score,
     }
 
-    summary, strengths, improvements = _build_text_feedback(total_words, filler_ratio, overall_score)
+    if lang.startswith("tr"):
+        summary, strengths, improvements = _build_text_feedback_tr(total_words, filler_ratio, overall_score)
+    else:
+        summary, strengths, improvements = _build_text_feedback(total_words, filler_ratio, overall_score)
 
     return {
         "metrics": metrics,

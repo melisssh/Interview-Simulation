@@ -94,35 +94,3 @@ def wpm_clarity_score(wpm: Optional[int]) -> int:
         return 50
     ideal = 135
     return int(max(0, min(100, 100 - abs(wpm - ideal) * 0.55)))
-
-
-def nonverbal_proxies_from_speech(
-    *,
-    pause_score: int,
-    volume_stability: int,
-    tone_variation: int,
-    sentiment: int,
-) -> dict:
-    """
-    When no vision pipeline runs, map speech-derived signals to non-verbal columns
-    so dashboards stay populated (documented as speech-inferred proxies).
-    """
-    sent_n = max(-100, min(100, sentiment))
-    base = int(0.38 * pause_score + 0.32 * volume_stability + 0.30 * tone_variation)
-    eye = int(max(0, min(100, base + sent_n * 0.12)))
-    head = int(max(0, min(100, volume_stability * 0.92 + (100 - pause_score) * 0.08)))
-    posture = int(max(0, min(100, 45 + tone_variation * 0.35 + pause_score * 0.25)))
-    pos = int(max(0, min(100, 35 + sent_n * 0.45)))
-    neg = int(max(0, min(100, 25 - sent_n * 0.35)))
-    neu = int(max(0, min(100, 100 - pos - neg + 20)))
-    neu = max(0, min(100, neu))
-    conf = int(max(0, min(100, (volume_stability + tone_variation + (50 + sent_n // 2)) / 3)))
-    return {
-        "eye_contact_score": eye,
-        "head_stability_score": head,
-        "posture_score": posture,
-        "facial_expression_positive": pos,
-        "facial_expression_neutral": neu,
-        "facial_expression_negative": neg,
-        "confidence_tone_score": conf,
-    }
