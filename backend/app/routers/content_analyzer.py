@@ -10,7 +10,7 @@ import logging
 from difflib import SequenceMatcher
 from typing import Dict, List, Optional
 
-from ..analysis.llm_answer_scores import gemini_technical_score_0_100
+from ..analysis.ollama_feedback import ollama_technical_score_0_100
 
 logger = logging.getLogger(__name__)
 
@@ -182,11 +182,13 @@ class ContentAnalyzer:
     @staticmethod
     def length_penalty(answer: str) -> int:
         """Return a penalty (0–20) based on answer length extremes.
-        Ideal range: 80–800 words per answer.
+        Ideal range: 40–800 words per answer.
+        Lower bound is 40 words (~20 sec spoken at 120 wpm) — typical Whisper
+        transcripts of 1-min answers sit around 80-150 words, so 80 was too strict.
         """
         word_count = len((answer or "").split())
-        if word_count < 80:
-            return int((80 - word_count) / 80 * 20)
+        if word_count < 40:
+            return int((40 - word_count) / 40 * 20)
         if word_count > 800:
             return min(10, int((word_count - 800) / 300 * 10))
         return 0
@@ -199,37 +201,29 @@ class ContentAnalyzer:
         answer_lower = answer.lower()
 
         situation_keywords = [
-            # EN
             "situation", "context", "at the time", "when i", "initially",
             "background", "scenario", "at that point", "there was", "we were",
-            # translated from TR
             "at the start", "at that time", "during the process", "in that period",
             "i encountered", "it happened", "there were", "in the phase", "working at",
         ]
         task_keywords = [
-            # EN
             "task", "responsible", "needed to", "required to", "goal was",
             "objective", "my role", "assigned to", "expected to", "had to",
-            # translated from TR
             "duty", "responsibility", "was needed", "need", "target", "purpose",
             "was expected", "my duty", "i took on", "requirement", "to complete",
             "to solve", "to ensure",
         ]
         action_keywords = [
-            # EN
             "i did", "we implemented", "i built", "developed", "decided to",
             "i created", "i designed", "i organized", "i analyzed", "i used",
             "i applied", "i coordinated", "i communicated", "approach was",
-            # translated from TR
             "i took", "i started", "i implemented", "i decided", "i established",
             "i researched", "i held a meeting", "i preferred",
         ]
         result_keywords = [
-            # EN
             "outcome", "result", "learned", "achieved", "improved", "delivered",
             "gained", "increased", "reduced", "solved", "completed", "realized",
             "accomplished", "as a result", "consequently", "in the end", "ultimately",
-            # translated from TR
             "success", "i completed", "i learned", "successful", "i improved",
             "i obtained", "i provided", "i won", "i increased", "i decreased",
             "i solved", "i accomplished", "i reached", "i noticed", "i contributed",
@@ -251,12 +245,74 @@ class ContentAnalyzer:
 
     def calculate_star_score(self, answer: str) -> int:
         """
-        Calculate STAR structure score (0-100)
+        Calculate STAR structure score (0-100).
+
+        Weighted elements: Action (35%) and Result (25%) carry more weight than
+        Situation (20%) and Task (20%), because interviewers care most about what
+        the candidate actually did and what happened as a result.
+
+        Partial credit per element:
+          0 matching keywords  → 0.0
+          1 matching keyword   → 0.6
+          2+ matching keywords → 1.0
+
+        Depth bonus: up to 10 pts for longer, more developed answers.
         """
-        star = self.detect_star_structure(answer)
-        present_count = sum(star.values())
-        score = int((present_count / 4) * 100)
-        logger.info(f"STAR Score: {score}")
+        answer_lower = (answer or "").lower()
+
+        situation_keywords = [
+            "situation", "context", "at the time", "when i", "initially",
+            "background", "scenario", "at that point", "there was", "we were",
+            "at the start", "at that time", "during the process", "in that period",
+            "i encountered", "it happened", "there were", "in the phase", "working at",
+        ]
+        task_keywords = [
+            "task", "responsible", "needed to", "required to", "goal was",
+            "objective", "my role", "assigned to", "expected to", "had to",
+            "duty", "responsibility", "was needed", "need", "target", "purpose",
+            "was expected", "my duty", "i took on", "requirement", "to complete",
+            "to solve", "to ensure",
+        ]
+        action_keywords = [
+            "i did", "we implemented", "i built", "developed", "decided to",
+            "i created", "i designed", "i organized", "i analyzed", "i used",
+            "i applied", "i coordinated", "i communicated", "approach was",
+            "i took", "i started", "i implemented", "i decided", "i established",
+            "i researched", "i held a meeting", "i preferred",
+        ]
+        result_keywords = [
+            "outcome", "result", "learned", "achieved", "improved", "delivered",
+            "gained", "increased", "reduced", "solved", "completed", "realized",
+            "accomplished", "as a result", "consequently", "in the end", "ultimately",
+            "success", "i completed", "i learned", "successful", "i improved",
+            "i obtained", "i provided", "i won", "i increased", "i decreased",
+            "i solved", "i accomplished", "i reached", "i noticed", "i contributed",
+            "efficiency", "impact", "feedback", "satisfaction",
+        ]
+
+        def _kw_credit(keywords: list) -> float:
+            count = sum(1 for kw in keywords if kw in answer_lower)
+            if count == 0: return 0.0
+            if count == 1: return 0.6
+            return 1.0
+
+        s = _kw_credit(situation_keywords)
+        t = _kw_credit(task_keywords)
+        a = _kw_credit(action_keywords)
+        r = _kw_credit(result_keywords)
+
+        weighted = s * 0.20 + t * 0.20 + a * 0.35 + r * 0.25
+        base = int(round(weighted * 100))
+
+        # Depth bonus: reward well-developed answers (>30 words), capped at 10 pts
+        word_count = len((answer or "").split())
+        depth_bonus = min(10, max(0, (word_count - 30) // 8))
+
+        score = min(100, base + depth_bonus)
+        logger.info(
+            "STAR Score: %d  (S=%.1f T=%.1f A=%.1f R=%.1f depth=+%d)",
+            score, s, t, a, r, depth_bonus,
+        )
         return score
 
     def _technical_overlap_score(self, question: str, answer: str) -> int:
@@ -280,9 +336,9 @@ class ContentAnalyzer:
     ) -> int:
         dom = (domain or "general").lower()
         if dom == "technical":
-            g = gemini_technical_score_0_100(question, answer, language=language)
+            g = ollama_technical_score_0_100(question, answer, language=language)
             if g is not None:
-                logger.info("Technical accuracy from Gemini: %s", g)
+                logger.info("Technical accuracy from Ollama: %s", g)
                 return g
         return self._technical_overlap_score(question, answer)
 
@@ -301,8 +357,8 @@ class ContentAnalyzer:
         logger.info(f"Analyzing answer for question: {question[:50]}...")
 
         relevance = self.calculate_relevance_score(question, answer)
-        star = self.calculate_star_score(answer) if is_behavioral else None
-        technical = self.estimate_technical_accuracy(question, answer, domain, language=language)
+        star      = self.calculate_star_score(answer)                              if is_behavioral     else None
+        technical = self.estimate_technical_accuracy(question, answer, domain, language=language) if not is_behavioral else None
         word_count = len((answer or "").split())
 
         # 2-component average: relevance + (star or technical)

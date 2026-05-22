@@ -329,6 +329,7 @@ UPLOAD_INTERVIEWS_DIR = Path("uploads") / "interviews"
 async def upload_interview_video(
     interview_id: int,
     file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
     request: Request = None,
@@ -353,59 +354,30 @@ async def upload_interview_video(
 
     data = await file.read()
     target_path.write_bytes(data)
-    interview.status = "analyzing"
-    db.commit()
 
+    # Save transcript now so speech_rate_wpm backfill has duration data later
     try:
         transcript_text, duration, _ignored1, _ignored2 = stt.get_transcript(interview_id, str(target_path))
         if transcript_text:
-            analysis = scoring.score_transcript(transcript_text, duration, language=interview.language or "tr")
-
             db.add(models.Transcript(
                 interview_id=interview_id,
                 text=transcript_text[:5000],
                 duration_seconds=duration,
             ))
-
-            import json
-            feedback_row = db.query(models.Feedback).filter(
-                models.Feedback.interview_id == interview_id
-            ).order_by(models.Feedback.created_at.desc(), models.Feedback.id.desc()).first()
-            if not feedback_row:
-                feedback_row = models.Feedback(interview_id=interview_id)
-                db.add(feedback_row)
-            feedback_row.metrics_json = json.dumps(dict(analysis["scores"]))
-            feedback_row.summary = analysis.get("summary", "")[:1000]
-            feedback_row.strengths = analysis.get("strengths", "")[:2000]
-            feedback_row.improvements = analysis.get("improvements", "")[:2000]
-            scores = analysis.get("scores", {}) if isinstance(analysis, dict) else {}
-            overall = scores.get("overall")
-            length = scores.get("length")
-            speaking_rate = scores.get("speaking_rate")
-            pause_control = scores.get("pause_control")
-
-            # Populate score columns for consistent API/UI rendering.
-            feedback_row.overall_score = int(overall) if overall is not None else None
-            feedback_row.content_quality_score = int(length) if length is not None else None
-            if speaking_rate is not None or pause_control is not None:
-                parts = [p for p in [speaking_rate, pause_control] if p is not None]
-                feedback_row.speech_quality_score = int(sum(parts) / len(parts))
-            else:
-                feedback_row.speech_quality_score = None
-            # We do not have true nonverbal analysis in this flow; use overall as neutral fallback.
-            feedback_row.nonverbal_score = int(overall) if overall is not None else None
-
-            # Fill per-answer scores on interview_answers (WS path); video STT only updated Feedback before.
-            from .analysis import apply_content_metrics_to_interview_answers
-
-            apply_content_metrics_to_interview_answers(db, interview)
-
-        interview.status = "analyzed"
-        db.commit()
+            db.commit()
     except Exception as e:
-        print(f"STT/Analysis error: {e}")
-        interview.status = "analysis_failed"
-        db.commit()
+        logger.warning("STT failed for interview %s: %s", interview_id, e)
+
+    # Keep status as "analyzing" — full pipeline (content + Ollama) runs in
+    # background so dashboard only shows "Results ready" when everything is done.
+    interview.status = "analyzing"
+    db.commit()
+
+    from .analysis import run_full_analysis
+    if background_tasks is not None:
+        background_tasks.add_task(run_full_analysis, interview_id)
+    else:
+        run_full_analysis(interview_id)
 
     return {
         "detail": "Video kaydedildi.",
@@ -479,6 +451,10 @@ def get_interview(
         "language": interview.language,
         "status": interview.status,
         "created_at": interview.created_at,
+        "company_name": interview.company_name,
+        "department_name": interview.department_name,
+        "position": interview.position,
+        "sector": interview.sector,
         "company_context": interview.company_context,
         "preparation_error": interview.preparation_error,
         "questions": questions,

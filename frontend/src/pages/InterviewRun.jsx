@@ -3,8 +3,8 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 
 import { API } from '../api'
 const SILENCE_SEND_MS = 1200
-const MIC_RMS_THRESHOLD = 0.006
-const MIN_CHUNKS_TO_SEND = 3
+const MIC_RMS_THRESHOLD = 0.002
+const MIN_CHUNKS_TO_SEND = 2
 
 function floatChunksToBase64Int16(chunks) {
   const length = chunks.reduce((sum, arr) => sum + arr.length, 0)
@@ -577,13 +577,27 @@ export default function InterviewRun() {
                   {!interviewEnded && (
                     <button
                       type="button"
-                      onClick={sendPendingAudio}
+                      onClick={() => {
+                        if (speechBlockedRef.current) {
+                          stopSpeaking()
+                          return
+                        }
+                        if (!pendingChunksRef.current.length) {
+                          setMicStatus('Ses algılanamadı — daha yüksek sesle konuşun')
+                          return
+                        }
+                        sendPendingAudio()
+                      }}
+                      disabled={isProcessing}
                       style={{
-                        padding: '0.5rem 1rem', background: '#111', color: '#fff', borderRadius: 8,
-                        border: 'none', fontWeight: 500, cursor: 'pointer', fontSize: '0.85rem',
+                        padding: '0.5rem 1rem',
+                        background: isProcessing ? '#6b7280' : speechBlockedRef.current ? '#2563eb' : '#111',
+                        color: '#fff', borderRadius: 8,
+                        border: 'none', fontWeight: 500,
+                        cursor: isProcessing ? 'not-allowed' : 'pointer', fontSize: '0.85rem',
                       }}
                     >
-                      {t.sendBtn}
+                      {isProcessing ? '⏳ İşleniyor...' : speechBlockedRef.current ? '⏹ Okumayı Durdur' : t.sendBtn}
                     </button>
                   )}
                 </div>

@@ -304,7 +304,7 @@ def analyze_interview_video(
                 torso_len = max(1.0, mid_hip_y - mid_shoulder_y)
                 upright = (mid_hip_y - nose_y) / torso_len
                 posture_scores.append(
-                    max(0.0, 100.0 - shoulder_tilt * 320.0 + min(25.0, upright * 8.0))
+                    max(0.0, min(100.0, 75.0 - shoulder_tilt * 250.0 + min(15.0, upright * 5.0)))
                 )
 
     cap.release()
@@ -323,7 +323,7 @@ def analyze_interview_video(
     eye_avg = statistics.mean(eye_scores) if eye_scores else 50.0
     if head_jitter:
         jitter_avg = statistics.mean(head_jitter)
-        head_score = max(0.0, 100.0 - jitter_avg * 1800.0)
+        head_score = max(0.0, 100.0 - jitter_avg * 600.0)
     else:
         head_score = 60.0
 
