@@ -25,6 +25,19 @@ const REC = {
   bg:    { 'Strong Yes': '#f0fdf4', 'Yes': '#eff6ff', 'Maybe': '#fffbeb', 'No': '#fef2f2', 'Strong No': '#fef2f2' },
 }
 
+/* ─── InfoChip ─── */
+const InfoChip = ({ label, value }) => (
+  <div style={{
+    display: 'flex', alignItems: 'center', gap: '0.45rem',
+    padding: '0.4rem 0.85rem', background: '#f9fafb',
+    border: '1px solid #e5e7eb', borderRadius: 99,
+    fontSize: '0.82rem', color: '#374151',
+  }}>
+    <span style={{ color: '#9ca3af', fontWeight: 500 }}>{label}:</span>
+    <span style={{ fontWeight: 600 }}>{value}</span>
+  </div>
+)
+
 /* ─── CircleGauge ─── */
 const CircleGauge = ({ score }) => {
   const s    = Math.max(0, Math.min(100, Number(score) || 0))
@@ -296,6 +309,24 @@ export default function InterviewResult() {
           </div>
         ) : (
           <>
+            {/* SESSION INFO */}
+            {(interview.company_name || interview.position || interview.sector || interview.department_name) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.25rem' }}>
+                {interview.company_name && (
+                  <InfoChip label="Company" value={interview.company_name} />
+                )}
+                {interview.position && (
+                  <InfoChip label="Position" value={interview.position} />
+                )}
+                {interview.sector && (
+                  <InfoChip label="Sector" value={interview.sector} />
+                )}
+                {interview.department_name && (
+                  <InfoChip label="Department" value={interview.department_name} />
+                )}
+              </div>
+            )}
+
             {/* TOP PANEL */}
             <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: '1px', background: '#e5e7eb', border: '1px solid #e5e7eb', borderRadius: '12px 12px 0 0', overflow: 'hidden' }}>
 

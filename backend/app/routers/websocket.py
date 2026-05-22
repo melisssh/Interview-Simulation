@@ -10,6 +10,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from ..analysis.speech_metrics import (
+    pause_frequency_score_from_pcm,
     pause_frequency_score_from_segments,
     pcm_duration_seconds,
     pcm_tone_variation_score,
@@ -74,8 +75,9 @@ def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "en") -> di
         dur = pcm_duration_seconds(len(audio_bytes))
         wc = len(text.split())
         wpm = words_per_minute(wc, dur)
-        ranges = [(float(s.start), float(s.end)) for s in segs]
-        pause = pause_frequency_score_from_segments(ranges)
+        # PCM-based pause detection: measures actual silence periods in raw audio,
+        # giving per-answer variation instead of the flat 82 from segment gaps.
+        pause = pause_frequency_score_from_pcm(audio_bytes)
         vol = pcm_volume_stability_score(audio_bytes)
         tone = pcm_tone_variation_score(audio_bytes)
         return {
@@ -434,6 +436,13 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
             logger.info(f"Interview questions loaded: {len(iqs)}")
             for iq in iqs:
                 question_text = iq.question_text or ""
+                # Fix #2: question_text may be stored as JSON string {"text": "..."}
+                if question_text and question_text.strip().startswith("{"):
+                    try:
+                        parsed = json.loads(question_text)
+                        question_text = parsed.get("text", question_text)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
                 if not question_text and iq.question_id:
                     q = db.query(models.Question).filter(
                         models.Question.id == iq.question_id
@@ -618,8 +627,9 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                     db = SessionLocal()
                     try:
                         print(f"🟢 Saving answer\n")
-                        # answer_count will be incremented in handle_answer, so use current value
-                        current_q_num = session.answer_count + 1  # Next question number (since we increment in handle_answer)
+                        # Fix #1 & #3: use question_count (which prepared question is being answered)
+                        # rather than answer_count+1 (which overcounts due to follow-ups)
+                        current_q_num = session.question_count
                         question_text = interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
 
                         answer_record = models.InterviewAnswer(
@@ -692,7 +702,8 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
 
                     db = SessionLocal()
                     try:
-                        current_q_num = session.answer_count + 1
+                        # Fix #1 & #3: use question_count (consistent with audio handler)
+                        current_q_num = session.question_count
                         question_text = interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
                         answer_record = models.InterviewAnswer(
                             interview_id=interview_id,
