@@ -19,7 +19,7 @@ FALLBACK_LOCAL_WHISPER = "local_whisper_failed"
 
 # Local Whisper model (lazy-loaded). "tiny" = fastest, "base" = better quality.
 _LOCAL_WHISPER_MODEL = None
-LOCAL_WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "tiny")  # tiny = çok hızlı ⚡
+LOCAL_WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "tiny")
 
 DUMMY_TEXT = (
     "This is a dummy transcript used to exercise the analysis "

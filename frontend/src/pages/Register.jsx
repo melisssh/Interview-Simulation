@@ -77,7 +77,7 @@ export default function Register() {
           <label style={labelStyle}>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} /></label>
           <label style={labelStyle}>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required style={inputStyle} /></label>
           {error && <p style={{ color: '#dc2626', margin: 0, fontSize: '0.9rem' }}>{error}</p>}
-          <button type="submit" disabled={loading} style={{ padding: '0.75rem 1.5rem', background: '#111', color: '#fff', borderRadius: 8, border: 'none', fontWeight: 500, fontSize: '1rem', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>{loading ? 'Creating account...' : 'Sign up'}</button>
+          <button type="submit" disabled={loading} className="primary-btn" style={{ width: '100%' }}>{loading ? 'Creating account...' : 'Sign up'}</button>
         </form>
         <p style={{ marginTop: '1.5rem', fontSize: '0.95rem', color: '#6b7280' }}>Already have an account?{' '}
           <Link to="/login" style={{ color: '#111', fontWeight: 500, textDecoration: 'underline' }}>Log in</Link>

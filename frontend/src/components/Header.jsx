@@ -37,7 +37,6 @@ export default function Header({ links }) {
     localStorage.removeItem('token')
     localStorage.removeItem('user_id')
     localStorage.removeItem('email')
-    localStorage.removeItem('is_admin')
     navigate('/login')
   }
 
@@ -68,8 +67,8 @@ export default function Header({ links }) {
         )}
         {!isLoggedIn && (
           <>
-            <Link to="/login" style={styles.link}>Log In</Link>
-            <Link to="/register" style={{ ...styles.link, background: '#111', color: '#fff', padding: '0.4rem 0.75rem', borderRadius: 6 }}>Sign Up</Link>
+            <Link to="/login" className="header-login">Log In</Link>
+            <Link to="/register" className="header-signup">Sign Up</Link>
           </>
         )}
       </div>

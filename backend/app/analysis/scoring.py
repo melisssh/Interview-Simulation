@@ -113,7 +113,7 @@ def score_transcript(
         "duration_seconds": duration_seconds,
     }
 
-    # Uzunluk skoru: 80–200 kelime arası ideal (100 puan)
+    # Length score: 80–200 words is ideal (100 points)
     if total_words == 0:
         length_score = 0
     elif total_words < 80:
@@ -123,7 +123,7 @@ def score_transcript(
     else:
         length_score = 100
 
-    # Filler kelime skoru: %0 filler = 100, %40 ve üzeri = 0
+    # Filler word score: 0% filler = 100, 40%+ filler = 0
     if filler_ratio >= 0.4:
         filler_score = 0
     else:

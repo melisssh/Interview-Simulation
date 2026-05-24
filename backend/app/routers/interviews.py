@@ -12,7 +12,7 @@ from starlette.requests import Request
 from ..database import SessionLocal
 from .. import models
 from .auth import get_current_user, get_db
-from .ollama_service import generate_questions, fallback_questions, research_company, chat_response
+from .ollama_service import generate_questions, fallback_questions, research_company
 from ..cv_read import read_cv_plaintext
 from ..analysis import stt, scoring
 from .messages import _, get_lang_from_header
@@ -33,7 +33,7 @@ ALLOWED_INTERVIEW_STATUSES = {
 
 
 @router.get("/categories")
-def get_categories(db: Session = Depends(get_db)):
+def get_categories(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     categories = db.query(models.Category).all()
     return [{"id": c.id, "name": c.name, "description": c.description} for c in categories]
 
@@ -190,51 +190,24 @@ def _prepare_interview_background(
             db.commit()
             logger.info(f"Company context saved for interview {interview_id}: {len(context)} chars")
 
-        # Step 2: Read CV
-        cv_text = None
-        if cv_path:
-            cv_text = read_cv_plaintext(cv_path)
+        # Step 2: Store category order (questions generated dynamically during interview)
+        if domain == "technical":
+            categories = ["intro", "motivation", "industry", "skills", "project", "learning", "team"]
+        else:
+            categories = ["intro", "motivation", "career", "strengths", "company", "team_hr"]
 
-        # Step 3: Generate questions
-        target_n = random.randint(5, 7)
-        ai_list = generate_questions(
-            position=position,
-            company_name=company_name,
-            department_name=department_name,
-            domain=domain,
-            sector=sector,
-            cv_text=cv_text,
-            profile_university=profile_university,
-            profile_department=profile_department,
-            profile_class_year=profile_class_year,
-            company_context=context,
-            n_questions=target_n,
-        )
+        for order, cat in enumerate(categories, 1):
+            db.add(models.InterviewQuestion(
+                interview_id=interview_id,
+                question_id=None,
+                question_text=cat,
+                order=order,
+            ))
 
-        if not ai_list:
-            logger.warning("Ollama question generation returned empty; using fallback.")
-            ai_list = fallback_questions(domain, target_n)
-
-        if ai_list:
-            order = 1
-            for item in ai_list[:target_n]:
-                text = (item.get("text") or "").strip()[:1024]
-                if not text:
-                    continue
-                db.add(
-                    models.InterviewQuestion(
-                        interview_id=interview_id,
-                        question_id=None,
-                        question_text=text,
-                        order=order,
-                    )
-                )
-                order += 1
-
-        # Step 4: Mark as ready
+        # Step 3: Mark as ready
         interview.status = "ready"
         db.commit()
-        logger.info(f"Interview {interview_id} background preparation completed. Questions: {order - 1}")
+        logger.info(f"Interview {interview_id} preparation done: {len(categories)} categories stored")
 
     except Exception as e:
         logger.error(f"Background preparation failed for interview {interview_id}: {e}", exc_info=True)
@@ -288,8 +261,9 @@ def delete_interview(
     db.query(models.Transcript).filter(models.Transcript.interview_id == interview_id).delete(synchronize_session=False)
     db.query(models.Feedback).filter(models.Feedback.interview_id == interview_id).delete(synchronize_session=False)
     if interview.video_path:
-        video_file = Path(interview.video_path)
-        if video_file.exists():
+        video_file = Path(interview.video_path).resolve()
+        safe_base = UPLOAD_INTERVIEWS_DIR.resolve()
+        if video_file.is_relative_to(safe_base) and video_file.exists():
             video_file.unlink()
     db.delete(interview)
     db.commit()
@@ -329,6 +303,7 @@ UPLOAD_INTERVIEWS_DIR = Path("uploads") / "interviews"
 async def upload_interview_video(
     interview_id: int,
     file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
     request: Request = None,
@@ -348,67 +323,43 @@ async def upload_interview_video(
     interview_dir = UPLOAD_INTERVIEWS_DIR / str(interview_id)
     interview_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_name = (file.filename or "interview.webm").replace("/", "_")
+    import uuid
+    ext = "webm" if "webm" in (file.content_type or "") else "mp4"
+    safe_name = f"{uuid.uuid4().hex}.{ext}"
     target_path = interview_dir / safe_name
 
+    MAX_VIDEO_SIZE = 500 * 1024 * 1024  # 500 MB
     data = await file.read()
+    if len(data) > MAX_VIDEO_SIZE:
+        raise HTTPException(status_code=413, detail="Video file too large. Maximum size is 500 MB.")
     target_path.write_bytes(data)
-    interview.status = "analyzing"
-    db.commit()
 
+    # Save transcript first so speech backfill has duration data
     try:
-        transcript_text, duration, _ignored1, _ignored2 = stt.get_transcript(interview_id, str(target_path))
+        transcript_text, duration, _, _ = stt.get_transcript(interview_id, str(target_path))
         if transcript_text:
-            analysis = scoring.score_transcript(transcript_text, duration, language=interview.language or "tr")
-
             db.add(models.Transcript(
                 interview_id=interview_id,
                 text=transcript_text[:5000],
                 duration_seconds=duration,
             ))
-
-            import json
-            feedback_row = db.query(models.Feedback).filter(
-                models.Feedback.interview_id == interview_id
-            ).order_by(models.Feedback.created_at.desc(), models.Feedback.id.desc()).first()
-            if not feedback_row:
-                feedback_row = models.Feedback(interview_id=interview_id)
-                db.add(feedback_row)
-            feedback_row.metrics_json = json.dumps(dict(analysis["scores"]))
-            feedback_row.summary = analysis.get("summary", "")[:1000]
-            feedback_row.strengths = analysis.get("strengths", "")[:2000]
-            feedback_row.improvements = analysis.get("improvements", "")[:2000]
-            scores = analysis.get("scores", {}) if isinstance(analysis, dict) else {}
-            overall = scores.get("overall")
-            length = scores.get("length")
-            speaking_rate = scores.get("speaking_rate")
-            pause_control = scores.get("pause_control")
-
-            # Populate score columns for consistent API/UI rendering.
-            feedback_row.overall_score = int(overall) if overall is not None else None
-            feedback_row.content_quality_score = int(length) if length is not None else None
-            if speaking_rate is not None or pause_control is not None:
-                parts = [p for p in [speaking_rate, pause_control] if p is not None]
-                feedback_row.speech_quality_score = int(sum(parts) / len(parts))
-            else:
-                feedback_row.speech_quality_score = None
-            # We do not have true nonverbal analysis in this flow; use overall as neutral fallback.
-            feedback_row.nonverbal_score = int(overall) if overall is not None else None
-
-            # Fill per-answer scores on interview_answers (WS path); video STT only updated Feedback before.
-            from .analysis import apply_content_metrics_to_interview_answers
-
-            apply_content_metrics_to_interview_answers(db, interview)
-
-        interview.status = "analyzed"
-        db.commit()
+            db.commit()
     except Exception as e:
-        print(f"STT/Analysis error: {e}")
-        interview.status = "analysis_failed"
-        db.commit()
+        logger.warning("STT failed for interview %s: %s", interview_id, e)
+
+    # Full analysis (content + speech + video + Ollama) runs in background
+    # so the upload response returns immediately and dashboard polls status
+    interview.status = "analyzing"
+    db.commit()
+
+    from .analysis import run_full_analysis
+    if background_tasks is not None:
+        background_tasks.add_task(run_full_analysis, interview_id)
+    else:
+        run_full_analysis(interview_id)
 
     return {
-        "detail": "Video kaydedildi.",
+        "detail": "Video uploaded.",
         "filename": safe_name,
         "path": str(target_path),
     }
@@ -479,6 +430,10 @@ def get_interview(
         "language": interview.language,
         "status": interview.status,
         "created_at": interview.created_at,
+        "company_name": interview.company_name,
+        "department_name": interview.department_name,
+        "position": interview.position,
+        "sector": interview.sector,
         "company_context": interview.company_context,
         "preparation_error": interview.preparation_error,
         "questions": questions,
@@ -489,35 +444,3 @@ def get_interview(
     }
 
 
-class ChatMessage(BaseModel):
-    message: str
-
-
-@router.post("/interviews/{interview_id}/chat")
-def chat(
-    interview_id: int,
-    payload: ChatMessage,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-    request: Request = None,
-):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
-    interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
-    if not interview:
-        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
-    if interview.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail=_("access_denied", lang))
-
-    transcript_row = db.query(models.Transcript).filter(models.Transcript.interview_id == interview_id).first()
-    feedback_row = db.query(models.Feedback).filter(models.Feedback.interview_id == interview_id).first()
-    transcript = (transcript_row.text or "") if transcript_row else ""
-    summary = (feedback_row.summary or "") if feedback_row else ""
-    strengths = (feedback_row.strengths or "") if feedback_row else ""
-    improvements = (feedback_row.improvements or "") if feedback_row else ""
-
-    user_msg = (payload.message or "").strip()
-    if not user_msg:
-        raise HTTPException(status_code=400, detail=_("empty_message", lang))
-
-    reply = chat_response(transcript, summary, strengths, improvements, user_msg)
-    return {"reply": reply}

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-
-const API = import.meta.env.VITE_API_URL || '/api'
+import { API } from '../api'
 
 /* ─── utils ─── */
 const toNum     = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null }
@@ -24,6 +23,19 @@ const REC = {
   color: { 'Strong Yes': '#16a34a', 'Yes': '#2563eb', 'Maybe': '#d97706', 'No': '#dc2626', 'Strong No': '#991b1b' },
   bg:    { 'Strong Yes': '#f0fdf4', 'Yes': '#eff6ff', 'Maybe': '#fffbeb', 'No': '#fef2f2', 'Strong No': '#fef2f2' },
 }
+
+/* ─── InfoChip ─── */
+const InfoChip = ({ label, value }) => (
+  <div style={{
+    display: 'flex', alignItems: 'center', gap: '0.45rem',
+    padding: '0.4rem 0.85rem', background: '#f9fafb',
+    border: '1px solid #e5e7eb', borderRadius: 99,
+    fontSize: '0.82rem', color: '#374151',
+  }}>
+    <span style={{ color: '#9ca3af', fontWeight: 500 }}>{label}:</span>
+    <span style={{ fontWeight: 600 }}>{value}</span>
+  </div>
+)
 
 /* ─── CircleGauge ─── */
 const CircleGauge = ({ score }) => {
@@ -132,6 +144,17 @@ const OllamaBlock = ({ text }) => {
   )
 }
 
+/* ─── Shell ─── */
+const Shell = ({ children }) => (
+  <div style={{ minHeight: '100vh', background: '#fff' }}>
+    <header style={{ borderBottom: '1px solid #e5e7eb', padding: '0 1.75rem', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <Link to="/dashboard" style={{ fontWeight: 700, color: '#111', textDecoration: 'none', fontSize: '1rem' }}>Interview Simulation</Link>
+      <Link to="/dashboard" style={{ fontSize: '0.85rem', color: '#6b7280', textDecoration: 'none' }}>← Back to Dashboard</Link>
+    </header>
+    {children}
+  </div>
+)
+
 /* ─── Main ─── */
 export default function InterviewResult() {
   const { id }   = useParams()
@@ -178,7 +201,7 @@ export default function InterviewResult() {
         if (ir.status === 401 || ir.status === 403) { navigate('/login'); return }
         if (!ir.ok) throw new Error('Interview not found')
         const iv = await ir.json()
-        if (iv.status === 'created' || iv.status === 'in_progress') { navigate(`/interview/${id}`); return }
+        if (['created', 'preparing', 'ready', 'in_progress'].includes(iv.status)) { navigate(`/interview/${id}`); return }
         setInterview(iv)
         const ar = await fetch(`${API}/interviews/${id}/analysis`, { headers: { Authorization: `Bearer ${token}` } })
         if (ar.ok) setAnalysis(await ar.json())
@@ -228,17 +251,6 @@ export default function InterviewResult() {
   }
 
   const isRunning = analyzing || interview?.status === 'analyzing'
-
-  /* ── Shell ── */
-  const Shell = ({ children }) => (
-    <div style={{ minHeight: '100vh', background: '#fff', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      <header style={{ borderBottom: '1px solid #e5e7eb', padding: '0 1.75rem', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Link to="/dashboard" style={{ fontWeight: 700, color: '#111', textDecoration: 'none', fontSize: '1rem' }}>Interview Simulation</Link>
-        <Link to="/dashboard" style={{ fontSize: '0.85rem', color: '#6b7280', textDecoration: 'none' }}>← Back to Dashboard</Link>
-      </header>
-      {children}
-    </div>
-  )
 
   if (!token) return null
   if (loading)  return <Shell><div style={{ padding: '4rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.9rem' }}>Loading…</div></Shell>
@@ -296,6 +308,24 @@ export default function InterviewResult() {
           </div>
         ) : (
           <>
+            {/* SESSION INFO */}
+            {(interview.company_name || interview.position || interview.sector || interview.department_name) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1.25rem' }}>
+                {interview.company_name && (
+                  <InfoChip label="Company" value={interview.company_name} />
+                )}
+                {interview.position && (
+                  <InfoChip label="Position" value={interview.position} />
+                )}
+                {interview.sector && (
+                  <InfoChip label="Sector" value={interview.sector} />
+                )}
+                {interview.department_name && (
+                  <InfoChip label="Department" value={interview.department_name} />
+                )}
+              </div>
+            )}
+
             {/* TOP PANEL */}
             <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: '1px', background: '#e5e7eb', border: '1px solid #e5e7eb', borderRadius: '12px 12px 0 0', overflow: 'hidden' }}>
 

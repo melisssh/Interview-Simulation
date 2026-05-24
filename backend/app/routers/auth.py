@@ -24,12 +24,28 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "sizin-gizli-anahtar-buraya-degisitirin")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY environment variable is not set.")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # 8 hours
 
 security = HTTPBearer(auto_error=False)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Simple in-memory rate limiter (ip → [timestamps])
+import time as _time
+from collections import defaultdict
+_rate_store: dict = defaultdict(list)
+
+def _check_rate_limit(key: str, max_calls: int = 10, window: int = 60) -> None:
+    """Raises 429 if key exceeded max_calls in the last `window` seconds."""
+    now = _time.time()
+    calls = [t for t in _rate_store[key] if now - t < window]
+    calls.append(now)
+    _rate_store[key] = calls
+    if len(calls) > max_calls:
+        raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
 
 
 def hash_password(password: str):
@@ -136,15 +152,6 @@ def get_current_user(
     return user
 
 
-def require_admin(
-    current_user: models.User = Depends(get_current_user),
-    request: Request = None,
-):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
-    if not getattr(current_user, "is_admin", 0):
-        raise HTTPException(status_code=403, detail=_("admin_only", lang))
-    return current_user
-
 
 class CreateUserRequest(BaseModel):
     email: EmailStr
@@ -194,19 +201,18 @@ def create_user(
         "Interview Simulation"
     )
 
-    try:
-        send_email(to_email=email, subject=subject, body=body)
-        logger.info("Verification email sent to %s", email)
-    except Exception as e:
-        logger.warning("Could not send verification email to %s: %s", email, repr(e))
-        # DEV mode: Auto-verify if email can't be sent (local only)
-        if os.getenv("DEV_AUTO_VERIFY") == "1":
-            new_user.is_verified = 1
-            new_user.verification_token = None
-            new_user.verification_expires_at = None
-            db.commit()
-            logger.info("DEV_AUTO_VERIFY: User %s auto-verified", email)
-        # Don't fail registration if email can't be sent
+    if os.getenv("DEV_AUTO_VERIFY") in ("1", "true", "True"):
+        new_user.is_verified = 1
+        new_user.verification_token = None
+        new_user.verification_expires_at = None
+        db.commit()
+        logger.info("DEV_AUTO_VERIFY: User %s auto-verified (email skipped)", email)
+    else:
+        try:
+            send_email(to_email=email, subject=subject, body=body)
+            logger.info("Verification email sent to %s", email)
+        except Exception as e:
+            logger.warning("Could not send verification email to %s: %s", email, repr(e))
 
     return {"id": new_user.id, "email": new_user.email, "message": "Registration successful. Please verify your email."}
 
@@ -246,7 +252,10 @@ def change_password(
 def forgot_password(
     payload: ForgotPasswordRequest,
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
+    ip = request.client.host if request and request.client else "unknown"
+    _check_rate_limit(f"forgot:{ip}", max_calls=5, window=60)
     email = (payload.email or "").strip().lower()
     user = db.query(models.User).filter(models.User.email == email).first()
     generic_response = {
@@ -396,13 +405,13 @@ def login(
     request: Request = None,
 ):
     lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
+    ip = request.client.host if request and request.client else "unknown"
+    _check_rate_limit(f"login:{ip}", max_calls=10, window=60)
     email = payload.get("email", "")
     password = payload.get("password", "")
     user = db.query(models.User).filter(models.User.email == email).first()
-    if not user:
-        raise HTTPException(status_code=401, detail=_("user_not_found", lang))
-    if not verify_password(password, user.password):
-        raise HTTPException(status_code=401, detail=_("wrong_password", lang))
+    if not user or not verify_password(password, user.password):
+        raise HTTPException(status_code=401, detail=_("invalid_credentials", lang))
     if not user.is_verified:
         raise HTTPException(status_code=403, detail=_("email_not_verified", lang))
     token = create_access_token(data={"user_id": user.id})
@@ -411,24 +420,7 @@ def login(
         "token_type": "bearer",
         "user_id": user.id,
         "email": user.email,
-        "is_admin": getattr(user, "is_admin", 0),
     }
-
-
-@router.get("/users")
-def get_users(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
-    users = db.query(models.User).all()
-    return [
-        {
-            "id": u.id,
-            "email": u.email,
-            "is_admin": getattr(u, "is_admin", 0),
-        }
-        for u in users
-    ]
 
 
 class ProfileUpdate(BaseModel):
@@ -436,6 +428,11 @@ class ProfileUpdate(BaseModel):
     university: str | None = None
     department: str | None = None
     class_year: str | None = None
+
+
+@router.get("/me")
+def get_me(current_user: models.User = Depends(get_current_user)):
+    return {"id": current_user.id, "email": current_user.email}
 
 
 @router.get("/profile")
@@ -514,10 +511,8 @@ def upload_profile_cv(
         db.flush()
     user_dir = os.path.join(UPLOAD_DIR, str(current_user.id))
     os.makedirs(user_dir, exist_ok=True)
-    original_name = (file.filename or "cv.pdf").replace("/", "_")
-    safe_name = "".join(c for c in original_name if c.isalnum() or c in "._- ")
-    if not safe_name.lower().endswith(".pdf"):
-        safe_name += ".pdf"
+    import uuid
+    safe_name = f"{uuid.uuid4().hex}.pdf"
     path = os.path.join(user_dir, safe_name)
     with open(path, "wb") as f:
         f.write(contents)
