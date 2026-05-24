@@ -3,6 +3,7 @@ Interview Analysis API Endpoints
 Handles metrics calculation, content analysis, and feedback generation
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, List, Optional, Tuple
@@ -26,7 +27,7 @@ router = APIRouter()
 
 def run_full_analysis(interview_id: int) -> None:
     """
-    Complete analysis pipeline (content + speech + video + Ollama feedback).
+    Run the complete analysis pipeline (content + speech + video + Ollama feedback).
     Creates its own DB session — safe to call as a FastAPI BackgroundTask.
     Sets interview.status to 'analyzed' on success or 'analysis_failed' on error.
     """
@@ -57,7 +58,7 @@ def run_full_analysis(interview_id: int) -> None:
             vals = [getter(r) for r in answer_rows if getter(r) is not None]
             return int(sum(vals) / len(vals)) if vals else None
 
-        content_scores   = [m.get("content_score",  50) for m in all_metrics if "content_score"  in m]
+        content_scores  = [m.get("content_score",  50) for m in all_metrics if "content_score"  in m]
         relevance_scores = [m.get("relevance_score", 50) for m in all_metrics if "relevance_score" in m]
         overall_content  = int(sum(content_scores)  / len(content_scores))  if content_scores  else 50
         overall_relevance = int(sum(relevance_scores) / len(relevance_scores)) if relevance_scores else 50
@@ -84,8 +85,10 @@ def run_full_analysis(interview_id: int) -> None:
         nonverbal_aggregate = int(sum(nv_parts) / len(nv_parts)) if nv_parts else None
 
         avg_words = _mean_int(lambda r: r.answer_length_words) or 0
-        tech_avg  = _mean_int(lambda r: r.technical_accuracy_score)
-        star_avg  = _mean_int(lambda r: r.star_structure_score)
+
+        # Domain-aware averages — None when not applicable
+        tech_avg = _mean_int(lambda r: r.technical_accuracy_score)   # None for general domain
+        star_avg = _mean_int(lambda r: r.star_structure_score)        # None for technical domain
 
         aggregated_metrics = {
             "domain": interview.domain,
@@ -93,8 +96,8 @@ def run_full_analysis(interview_id: int) -> None:
             "relevance_score": overall_relevance,
             "answer_count": n_answers,
             "answer_length_words": avg_words,
-            "star_structure_score": star_avg,
-            "technical_accuracy_score": tech_avg,
+            "star_structure_score": star_avg,          # None for technical domain
+            "technical_accuracy_score": tech_avg,      # None for general domain
             "speech_quality_score": speech_quality,
             "speech_rate_wpm": wpm_avg if wpm_avg is not None else 120,
             "pause_frequency_score": pause_avg if pause_avg is not None else 70,
@@ -115,7 +118,7 @@ def run_full_analysis(interview_id: int) -> None:
             questions_answers=qa_pairs,
             metrics=aggregated_metrics,
             domain=interview.domain or "general",
-            language=interview.language or "tr",
+            language=interview.language or "en",
         )
 
         feedback = (
@@ -128,27 +131,36 @@ def run_full_analysis(interview_id: int) -> None:
             feedback = models.Feedback(interview_id=interview_id)
             db.add(feedback)
 
-        def _fit_label(score):
-            if score is None: return "Adequate"
-            if score >= 80:   return "Excellent"
+        def _communication_label(score: Optional[int]) -> str:
+            """Speech-based communication skill label."""
+            if score is None: return "Average"
+            if score >= 80:   return "Strong"
             if score >= 65:   return "Good"
-            if score >= 50:   return "Adequate"
-            return "Needs Improvement"
+            if score >= 50:   return "Average"
+            return "Weak"
 
-        feedback.overall_score              = feedback_report["overall_score"]
-        feedback.content_quality_score      = feedback_report["content_score"]
-        feedback.speech_quality_score       = feedback_report["speech_score"]
-        feedback.nonverbal_score            = feedback_report["nonverbal_score"]
-        feedback.metrics_json               = json.dumps(aggregated_metrics)
-        feedback.summary                    = "Interview analysis complete"
-        feedback.strengths                  = "\n".join(feedback_report["strengths"])
-        feedback.improvements               = "\n".join(feedback_report["improvements"])
-        feedback.actionable_recommendations = ollama_text or feedback_report["content_feedback"]
-        feedback.technical_fit              = "Sufficient" if overall_content >= 75 else "Partial" if overall_content >= 60 else "Insufficient"
-        feedback.communication_fit          = _fit_label(speech_quality)
-        feedback.motivation_level           = _fit_label(overall_content)
-        feedback.overall_recommendation     = feedback_report["recommendation"]
-        interview.status                    = "analyzed"
+        def _motivation_label(score: Optional[int]) -> str:
+            """Content-based motivation / engagement label."""
+            if score is None: return "Average"
+            if score >= 80:   return "High"
+            if score >= 65:   return "Moderate"
+            if score >= 50:   return "Average"
+            return "Low"
+
+        feedback.overall_score               = feedback_report["overall_score"]
+        feedback.content_quality_score       = feedback_report["content_score"]
+        feedback.speech_quality_score        = feedback_report["speech_score"]
+        feedback.nonverbal_score             = feedback_report["nonverbal_score"]
+        feedback.metrics_json                = json.dumps(aggregated_metrics)
+        feedback.summary                     = "Interview analysis complete"
+        feedback.strengths                   = "\n".join(feedback_report["strengths"])
+        feedback.improvements                = "\n".join(feedback_report["improvements"])
+        feedback.actionable_recommendations  = ollama_text or feedback_report["content_feedback"]
+        feedback.technical_fit               = "Sufficient" if overall_content >= 75 else "Partial" if overall_content >= 60 else "Insufficient"
+        feedback.communication_fit           = _communication_label(speech_quality)
+        feedback.motivation_level            = _motivation_label(overall_content)
+        feedback.overall_recommendation      = feedback_report["recommendation"]
+        interview.status                     = "analyzed"
         db.commit()
         logger.info("Background analysis complete for interview_id=%s", interview_id)
 
@@ -166,11 +178,25 @@ def run_full_analysis(interview_id: int) -> None:
         db.close()
 
 
-
 def _backfill_speech_from_transcript(db: Session, interview: models.Interview, answers: List[Any]) -> None:
-    """Fill missing speech_rate_wpm and pause_frequency_score from interview transcript."""
+    """Fill missing speech_rate_wpm and pause_frequency_score from interview transcript.
+
+    WPM note: the transcript only provides total word count + total duration,
+    so per-answer timing is unavailable. We estimate each missing answer's WPM
+    from its own word count and its proportional share of the total duration —
+    which is mathematically equivalent to the overall rate but derives from
+    per-answer data and stays None when the answer has no text.
+    """
     if not answers:
         return
+
+    # Pause score: keep real PCM-based value from WebSocket if present;
+    # fall back to text-based English filler-word proxy only when missing.
+    for ar in answers:
+        if ar.pause_frequency_score is None:
+            ar.pause_frequency_score = pause_control_from_answer_text(ar.answer_text or "")  # English fallback
+
+    # speech_rate_wpm backfill requires a transcript with valid duration
     tr = (
         db.query(models.Transcript)
         .filter(models.Transcript.interview_id == interview.id)
@@ -179,18 +205,24 @@ def _backfill_speech_from_transcript(db: Session, interview: models.Interview, a
     )
     if not tr or not tr.duration_seconds or tr.duration_seconds <= 0:
         return
+
+    total_duration = float(tr.duration_seconds)
     full_text = (tr.text or "").strip()
     total_words = len(full_text.split())
     if total_words <= 0:
         return
-    lang = interview.language or "tr"
-    overall_wpm = words_per_minute(total_words, float(tr.duration_seconds))
 
+    # Assign per-answer WPM only to answers that lack real PCM-based timing.
+    # Use the answer's own word count to estimate its proportional duration.
     for ar in answers:
-        if ar.speech_rate_wpm is None and overall_wpm is not None:
-            ar.speech_rate_wpm = overall_wpm
-        if ar.pause_frequency_score is None:
-            ar.pause_frequency_score = pause_control_from_answer_text(ar.answer_text or "", lang)
+        if ar.speech_rate_wpm is not None:
+            continue  # already set from PCM — don't overwrite
+        answer_words = len((ar.answer_text or "").split())
+        if answer_words <= 0:
+            continue  # empty answer — leave as None
+        # Proportional duration estimate: answer_words / total_words * total_duration
+        est_duration = (answer_words / total_words) * total_duration
+        ar.speech_rate_wpm = words_per_minute(answer_words, est_duration)
 
 
 _VIDEO_NONVERBAL_KEYS = (
@@ -258,7 +290,7 @@ def apply_content_metrics_to_interview_answers(db: Session, interview: models.In
     all_metrics: List[Any] = []
     row_blobs: List[dict] = []
     is_behavioral = interview.domain == "general"
-    lang = interview.language or "tr"
+    lang = interview.language or "en"
 
     for answer_row in answers:
         try:
@@ -315,7 +347,7 @@ def get_interview_analysis(
     current_user: models.User = Depends(get_current_user),
 ):
     """Get complete analysis for an interview"""
-    logger.info("GET /analysis endpoint: interview_id=%s", interview_id)
+    print(f"\n📊 GET /analysis endpoint: interview_id={interview_id}\n")
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
         raise HTTPException(status_code=404, detail="Interview not found")
@@ -357,155 +389,33 @@ async def analyze_interview(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Analyze interview: calculate metrics and generate feedback"""
-    logger.info("ANALYZE endpoint started: interview_id=%s", interview_id)
+    """Analyze interview: calculate metrics and generate feedback (including Ollama)."""
+    interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    if interview.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not have access to this interview")
 
+    # run_full_analysis is CPU/IO-heavy (Whisper + MediaPipe + SentenceTransformer + Ollama).
+    # Run it in a thread-pool executor so the async event loop stays free for other requests.
     try:
-        interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
-        if not interview:
-            raise HTTPException(status_code=404, detail="Interview not found")
-        if interview.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="You do not have access to this interview")
-        all_metrics, n_answers = apply_content_metrics_to_interview_answers(db, interview)
-
-        if n_answers == 0:
-            raise HTTPException(status_code=400, detail="No answer data found")
-
-        interview.status = "analyzing"
-        db.commit()
-
-        answer_rows = (
-            db.query(models.InterviewAnswer)
-            .filter(models.InterviewAnswer.interview_id == interview_id)
-            .order_by(models.InterviewAnswer.question_order)
-            .all()
-        )
-
-        def _mean_int(getter):
-            vals = [getter(r) for r in answer_rows if getter(r) is not None]
-            return int(sum(vals) / len(vals)) if vals else None
-
-        # Content
-        content_scores = [m.get("content_score", 50) for m in all_metrics if "content_score" in m]
-        relevance_scores = [m.get("relevance_score", 50) for m in all_metrics if "relevance_score" in m]
-        overall_content = int(sum(content_scores) / len(content_scores)) if content_scores else 50
-        overall_relevance = int(sum(relevance_scores) / len(relevance_scores)) if relevance_scores else 50
-
-        # Speech
-        wpm_avg = _mean_int(lambda r: r.speech_rate_wpm)
-        pause_avg = _mean_int(lambda r: r.pause_frequency_score)
-        wpm_clarity_vals = [
-            wpm_clarity_score(int(r.speech_rate_wpm))
-            for r in answer_rows
-            if r.speech_rate_wpm is not None
-        ]
-        if wpm_clarity_vals and pause_avg is not None:
-            speech_quality = int((sum(wpm_clarity_vals) / len(wpm_clarity_vals) + pause_avg) / 2)
-        elif wpm_clarity_vals:
-            speech_quality = int(sum(wpm_clarity_vals) / len(wpm_clarity_vals))
-        elif pause_avg is not None:
-            speech_quality = pause_avg
-        else:
-            speech_quality = 65
-
-        # Nonverbal (only if video was analyzed)
-        eye_avg = _mean_int(lambda r: r.eye_contact_score)
-        posture_avg = _mean_int(lambda r: r.posture_score)
-        head_avg = _mean_int(lambda r: r.head_stability_score)
-        nv_parts = [x for x in [eye_avg, posture_avg, head_avg] if x is not None]
-        nonverbal_aggregate = int(sum(nv_parts) / len(nv_parts)) if nv_parts else None
-
-        tech_avg = _mean_int(lambda r: r.technical_accuracy_score)
-
-        aggregated_metrics = {
-            "domain": interview.domain,
-            "content_score": overall_content,
-            "relevance_score": overall_relevance,
-            "answer_count": n_answers,
-            "speech_quality_score": speech_quality,
-            "speech_rate_wpm": wpm_avg if wpm_avg is not None else 120,
-            "pause_frequency_score": pause_avg if pause_avg is not None else 70,
-            "eye_contact_score": eye_avg,
-            "posture_score": posture_avg,
-            "head_stability_score": head_avg,
-            "nonverbal_aggregate": nonverbal_aggregate,
-            "technical_accuracy_score": tech_avg if tech_avg is not None else overall_content,
-        }
-
-        feedback_gen = get_feedback_generator()
-        feedback_report = feedback_gen.generate_full_report(
-            interview_data={"domain": interview.domain, "language": interview.language},
-            metrics=aggregated_metrics,
-        )
-
-        # Ollama: personalized feedback from actual Q&A content
-        qa_pairs = [
-            {"question": r.question_text or "", "answer": r.answer_text or ""}
-            for r in answer_rows
-        ]
-        ollama_text = generate_ollama_feedback(
-            questions_answers=qa_pairs,
-            metrics=aggregated_metrics,
-            domain=interview.domain or "general",
-            language=interview.language or "tr",
-        )
-
-        feedback = db.query(models.Feedback).filter(
-            models.Feedback.interview_id == interview_id
-        ).order_by(models.Feedback.created_at.desc(), models.Feedback.id.desc()).first()
-        if not feedback:
-            feedback = models.Feedback(interview_id=interview_id)
-            db.add(feedback)
-
-        def _fit_label(score):
-            if score is None:
-                return "Adequate"
-            if score >= 80:
-                return "Excellent"
-            elif score >= 65:
-                return "Good"
-            elif score >= 50:
-                return "Adequate"
-            else:
-                return "Needs Improvement"
-
-        feedback.overall_score = feedback_report["overall_score"]
-        feedback.content_quality_score = feedback_report["content_score"]
-        feedback.speech_quality_score = feedback_report["speech_score"]
-        feedback.nonverbal_score = feedback_report["nonverbal_score"]
-        feedback.metrics_json = json.dumps(aggregated_metrics)
-        feedback.summary = "Interview analysis complete"
-        feedback.strengths = "\n".join(feedback_report["strengths"])
-        feedback.improvements = "\n".join(feedback_report["improvements"])
-        feedback.actionable_recommendations = ollama_text or feedback_report["content_feedback"]
-        feedback.technical_fit = "Sufficient" if overall_content >= 75 else "Partial" if overall_content >= 60 else "Insufficient"
-        feedback.communication_fit = _fit_label(speech_quality)
-        feedback.motivation_level = _fit_label(overall_content)
-        feedback.overall_recommendation = feedback_report["recommendation"]
-        interview.status = "analyzed"
-
-        db.commit()
-        db.refresh(feedback)
-
-        logger.info("Analysis complete: interview_id=%s score=%s recommendation=%s", interview_id, feedback.overall_score, feedback.overall_recommendation)
-
-        return {
-            "status": "success",
-            "interview_id": interview_id,
-            "overall_score": feedback.overall_score,
-            "recommendation": feedback.overall_recommendation,
-        }
-
-    except HTTPException:
-        raise
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, run_full_analysis, interview_id)
     except Exception as e:
-        logger.error("Analysis error for interview %s: %s", interview_id, e, exc_info=True)
-        try:
-            interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
-            if interview:
-                interview.status = "analysis_failed"
-                db.commit()
-        except Exception:
-            db.rollback()
-        logger.error("Analysis error for interview %s: %s", interview_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Analysis failed. Please try again later.")
+        logger.error("analyze endpoint error for interview %s: %s", interview_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
+
+    # Re-read to return fresh status/scores
+    db.expire(interview)
+    feedback = (
+        db.query(models.Feedback)
+        .filter(models.Feedback.interview_id == interview_id)
+        .order_by(models.Feedback.created_at.desc(), models.Feedback.id.desc())
+        .first()
+    )
+    return {
+        "status": "success",
+        "interview_id": interview_id,
+        "overall_score": feedback.overall_score if feedback else None,
+        "recommendation": feedback.overall_recommendation if feedback else None,
+    }

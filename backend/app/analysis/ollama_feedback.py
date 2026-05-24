@@ -8,6 +8,7 @@ import logging
 import os
 import urllib.request
 import urllib.error
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,57 @@ def ollama_technical_score_0_100(question: str, answer: str, language: str = "tr
     if not m:
         return None
     return max(0, min(100, int(m.group(1))))
+
+
+def ollama_technical_score_0_100(question: str, answer: str, language: str = "tr") -> Optional[int]:
+    """
+    Ask the local Ollama model to score technical correctness of an answer (0-100).
+    Returns an int or None on failure.
+    """
+    import re
+    lang_note = "Turkish" if (language or "tr").lower().startswith("tr") else "English"
+    prompt = (
+        f"You are a strict technical interview evaluator. Language context: {lang_note}.\n"
+        f"Question:\n{question[:1500]}\n\n"
+        f"Candidate answer:\n{answer[:4000]}\n\n"
+        "Rate the technical correctness, depth, and relevance of the answer on a scale 0-100.\n"
+        'Reply with a single JSON object only, no extra text: {"score": <integer 0-100>}\n'
+    )
+
+    payload = json.dumps({
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.1,
+            "num_predict": 24,
+        },
+    }).encode()
+
+    try:
+        req = urllib.request.Request(
+            f"{OLLAMA_URL}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            result = json.loads(resp.read())
+            text = (result.get("response") or "").strip()
+    except urllib.error.URLError as e:
+        logger.warning("Ollama technical score unreachable: %s", e)
+        return None
+    except Exception as e:
+        logger.warning("Ollama technical score error: %s", e)
+        return None
+
+    m = re.search(r'"score"\s*:\s*(\d+)', text)
+    if not m:
+        m = re.search(r'\b(\d{1,3})\b', text)
+    if not m:
+        return None
+    val = int(m.group(1))
+    return max(0, min(100, val))
 
 
 def generate_ollama_feedback(
@@ -132,7 +184,7 @@ IMPORTANT: Use "you/your" not "the candidate". Write everything in English only.
         "stream": False,
         "options": {
             "temperature": 0.65,
-            "num_predict": min(250 + len(questions_answers) * 65, 1400),
+            "num_predict": min(180 + len(questions_answers) * 40, 600),
             "top_p": 0.9,
         },
     }).encode()
@@ -144,7 +196,7 @@ IMPORTANT: Use "you/your" not "the candidate". Write everything in English only.
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             body = resp.read()
             result = json.loads(body)
             text = (result.get("response") or "").strip()
