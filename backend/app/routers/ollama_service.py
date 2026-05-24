@@ -79,10 +79,6 @@ def _salvage_questions_from_text(raw: str) -> List[Dict]:
     return out
 
 
-def _text_wrong_language(text: str) -> bool:
-    return False
-
-
 def _validate_questions(questions: List[Dict], n_questions: int) -> List[Dict]:
     cleaned: List[Dict] = []
     seen: set[str] = set()
@@ -93,8 +89,6 @@ def _validate_questions(questions: List[Dict], n_questions: int) -> List[Dict]:
         text = " ".join(text.split())
         norm = re.sub(r"[^a-zA-Z0-9 ]+", "", text.lower())
         if norm in seen:
-            continue
-        if _text_wrong_language(text):
             continue
         seen.add(norm)
         cleaned.append({"text": text[:1024]})
@@ -294,9 +288,9 @@ def research_company(
         logger.warning("Ollama not available for research; returning empty context.")
         return ""
 
-    focus_sector = sector or "bilinmiyor"
-    focus_dept = department_name or "bilinmiyor"
-    focus_pos = position or "bilinmiyor"
+    focus_sector = sector or "N/A"
+    focus_dept = department_name or "N/A"
+    focus_pos = position or "N/A"
 
     prompt = f"""Company: {company_name}
 Sector: {focus_sector}
