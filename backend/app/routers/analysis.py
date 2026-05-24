@@ -195,7 +195,7 @@ def _backfill_speech_from_transcript(db: Session, interview: models.Interview, a
     # fall back to text-based Turkish filler-word proxy only when missing.
     for ar in answers:
         if ar.pause_frequency_score is None:
-            ar.pause_frequency_score = pause_control_from_answer_text(ar.answer_text or "")
+            ar.pause_frequency_score = pause_control_from_answer_text(ar.answer_text or "")  # English fallback
 
     # speech_rate_wpm backfill requires a transcript with valid duration
     tr = (

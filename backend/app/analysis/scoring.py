@@ -6,72 +6,64 @@ Goals:
 - Produce a few 0–100 scores
 - Generate simple summary / strengths / improvements texts
 
-Note: App is Turkish-only. English filler-word support has been removed.
+Note: App interviews are conducted in English. Turkish filler-word support removed.
 """
 
 from typing import Dict, Optional
 
 
-# Turkish filler / hesitation words (correctly encoded)
-FILLER_WORDS_TR = ["şey", "yani", "işte", "hani", "aslında", "eee", "hmm", "ya", "falan", "öyle"]
+# English filler / hesitation words
+FILLER_WORDS_EN = ["um", "uh", "like", "you know", "basically", "actually", "literally"]
 
 
 def _normalize_word(word: str) -> str:
     return word.strip(".,!?;:()[]\"'").lower()
 
 
-def _build_text_feedback_tr(
+def _build_text_feedback(
     total_words: int, filler_ratio: float, overall_score: int
 ) -> tuple[str, str, str]:
     if overall_score >= 80:
-        summary = "Yanıtınız güçlü ve akıcıydı."
+        summary = "Overall you provided a strong and fluent answer."
     elif overall_score >= 50:
-        summary = "Yanıtınız yeterliydi ancak bazı alanlarda gelişim var."
+        summary = "Your answer is generally sufficient but there is room for improvement."
     else:
-        summary = "Yanıtınızı yapı ve akıcılık açısından geliştirmeniz faydalı olur."
+        summary = "Your answer can be improved, especially in structure and fluency."
 
     strengths_parts: list[str] = []
     if total_words >= 80:
-        strengths_parts.append("Yanıtınız yeterince detaylı.")
+        strengths_parts.append("You provided a sufficiently detailed explanation.")
     if filler_ratio < 0.1:
-        strengths_parts.append(
-            "Dolgu kelime kullanımınız çok düşük; mesajınız net ve akıcı."
-        )
+        strengths_parts.append("Your use of filler words is very low, which keeps the message clear.")
     if not strengths_parts:
-        strengths_parts.append("Yanıtınız geliştirmek için iyi bir başlangıç.")
+        strengths_parts.append("Your answer forms a good starting point to build on.")
     strengths = " ".join(strengths_parts)
 
     improvements_parts: list[str] = []
     if total_words < 80:
-        improvements_parts.append(
-            "Yanıtınızı biraz daha uzatın ve somut örnekler ekleyin."
-        )
+        improvements_parts.append("Try to elaborate a bit more and add concrete examples.")
     if filler_ratio >= 0.2:
-        improvements_parts.append(
-            "Konuşurken “şey”, “yani” gibi dolgu kelimeleri azaltmaya çalışın."
-        )
+        improvements_parts.append("Focus on reducing filler words such as 'um' and 'uh' while speaking.")
     if overall_score < 80:
-        improvements_parts.append(
-            "Yanıtlarınızı net bir giriş, gelişme ve sonuçla yapılandırmaya çalışın."
-        )
+        improvements_parts.append("Practice structuring your answer with a clear beginning, middle and end.")
     improvements = (
         " ".join(improvements_parts)
         if improvements_parts
-        else "Benzer şekilde yanıtlamaya devam edebilirsiniz; seviye yeterli."
+        else "You can continue answering in a similar way; the current level is sufficient."
     )
     return summary, strengths, improvements
 
 
-def pause_control_from_answer_text(text: str, language: str = "tr") -> int:
+def pause_control_from_answer_text(text: str) -> int:
     """
-    0–100 pause / fluency proxy from a single answer transcript (Turkish filler density).
+    0–100 pause / fluency proxy from a single answer transcript (English filler density).
     Used as a text-based fallback when no PCM audio data is available.
     """
     words = [_normalize_word(w) for w in (text or "").split() if _normalize_word(w)]
     total_words = len(words)
     if total_words == 0:
         return 45
-    filler_count = sum(1 for w in words if w in FILLER_WORDS_TR)
+    filler_count = sum(1 for w in words if w in FILLER_WORDS_EN)
     filler_ratio = filler_count / total_words if total_words else 0.0
     if filler_ratio >= 0.4:
         return 0
@@ -97,10 +89,9 @@ def score_transcript(
     words = [_normalize_word(w) for w in transcript.split() if _normalize_word(w)]
     total_words = len(words)
 
-    filler_count = sum(1 for w in words if w in FILLER_WORDS_TR)
+    filler_count = sum(1 for w in words if w in FILLER_WORDS_EN)
     filler_ratio = filler_count / total_words if total_words else 0.0
 
-    # Basit metrikler
     metrics = {
         "total_words": total_words,
         "filler_count": filler_count,
@@ -108,7 +99,7 @@ def score_transcript(
         "duration_seconds": duration_seconds,
     }
 
-    # Uzunluk skoru: 80–200 kelime arası ideal (100 puan)
+    # Length score: 80–200 words is ideal (100 pts)
     if total_words == 0:
         length_score = 0
     elif total_words < 80:
@@ -118,7 +109,7 @@ def score_transcript(
     else:
         length_score = 100
 
-    # Filler kelime skoru: %0 filler = 100, %40 ve üzeri = 0
+    # Filler score: 0% filler = 100, 40%+ filler = 0
     if filler_ratio >= 0.4:
         filler_score = 0
     else:
@@ -132,7 +123,7 @@ def score_transcript(
         "overall": overall_score,
     }
 
-    summary, strengths, improvements = _build_text_feedback_tr(total_words, filler_ratio, overall_score)
+    summary, strengths, improvements = _build_text_feedback(total_words, filler_ratio, overall_score)
 
     return {
         "metrics": metrics,
@@ -141,6 +132,3 @@ def score_transcript(
         "strengths": strengths,
         "improvements": improvements,
     }
-
-
-
