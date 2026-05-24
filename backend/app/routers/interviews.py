@@ -14,7 +14,7 @@ from .. import models
 from .auth import get_current_user, get_db
 from .ollama_service import generate_questions, fallback_questions, research_company
 from ..cv_read import read_cv_plaintext
-from ..analysis import stt, scoring
+from ..analysis import stt
 from .messages import _, get_lang_from_header
 
 logger = logging.getLogger(__name__)
@@ -334,7 +334,7 @@ async def upload_interview_video(
         raise HTTPException(status_code=413, detail="Video file too large. Maximum size is 500 MB.")
     target_path.write_bytes(data)
 
-    # Save transcript first so speech backfill has duration data
+    # Save transcript now so speech_rate_wpm backfill has duration data later
     try:
         transcript_text, duration, _, _ = stt.get_transcript(interview_id, str(target_path))
         if transcript_text:
@@ -347,8 +347,8 @@ async def upload_interview_video(
     except Exception as e:
         logger.warning("STT failed for interview %s: %s", interview_id, e)
 
-    # Full analysis (content + speech + video + Ollama) runs in background
-    # so the upload response returns immediately and dashboard polls status
+    # Keep status as "analyzing" — full pipeline (content + Ollama) runs in
+    # background so dashboard only shows "Results ready" when everything is done.
     interview.status = "analyzing"
     db.commit()
 

@@ -303,7 +303,7 @@ def analyze_interview_video(
                 torso_len = max(1.0, mid_hip_y - mid_shoulder_y)
                 upright = (mid_hip_y - nose_y) / torso_len
                 posture_scores.append(
-                    max(0.0, 100.0 - shoulder_tilt * 320.0 + min(25.0, upright * 8.0))
+                    max(0.0, min(100.0, 75.0 - shoulder_tilt * 250.0 + min(15.0, upright * 5.0)))
                 )
 
     cap.release()
@@ -322,7 +322,7 @@ def analyze_interview_video(
     eye_avg = statistics.mean(eye_scores) if eye_scores else 50.0
     if head_jitter:
         jitter_avg = statistics.mean(head_jitter)
-        head_score = max(0.0, 100.0 - jitter_avg * 1800.0)
+        head_score = max(0.0, 100.0 - jitter_avg * 600.0)
     else:
         head_score = 60.0
 
@@ -352,54 +352,3 @@ def analyze_interview_video(
     }
 
 
-def extract_features(video_path: str) -> Dict[str, float]:
-    """Backward-compatible lightweight features + nonverbal scores when possible."""
-    basic = _opencv_basic_stats(video_path)
-    nv = analyze_interview_video(video_path)
-    out: Dict[str, float] = {}
-    out.update({k: float(v) for k, v in basic.items()})
-    for key in (
-        "eye_contact_score",
-        "head_stability_score",
-        "posture_score",
-        "facial_expression_positive",
-        "facial_expression_neutral",
-        "facial_expression_negative",
-        "confidence_tone_score",
-    ):
-        if key in nv and nv[key] is not None:
-            out[key] = float(nv[key])
-    return out
-
-
-def _opencv_basic_stats(video_path: str) -> Dict[str, float]:
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        return {}
-
-    frame_count = 0
-    total_brightness = 0.0
-    motion_acc = 0.0
-    prev_gray = None
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_count += 1
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        total_brightness += float(gray.mean())
-        if prev_gray is not None:
-            diff = cv2.absdiff(gray, prev_gray)
-            motion_acc += float(diff.mean())
-        prev_gray = gray
-
-    cap.release()
-    if frame_count == 0:
-        return {}
-
-    return {
-        "frame_count": float(frame_count),
-        "avg_brightness": float(total_brightness / frame_count),
-        "motion_score": float(motion_acc / max(1, frame_count - 1)),
-    }

@@ -5,12 +5,14 @@ Goals:
 - Compute basic metrics such as length and filler-word ratio
 - Produce a few 0–100 scores
 - Generate simple summary / strengths / improvements texts
+
+Note: App interviews are conducted in English. Turkish filler-word support removed.
 """
 
 from typing import Dict, Optional
 
 
-FILLER_WORDS_TR = ["sey", "yani", "ii", "eee", "hmm", "aslinda"]
+# English filler / hesitation words
 FILLER_WORDS_EN = ["um", "uh", "like", "you know", "basically", "actually", "literally"]
 
 
@@ -18,62 +20,50 @@ def _normalize_word(word: str) -> str:
     return word.strip(".,!?;:()[]\"'").lower()
 
 
-def _build_text_feedback_tr(
+def _build_text_feedback(
     total_words: int, filler_ratio: float, overall_score: int
 ) -> tuple[str, str, str]:
     if overall_score >= 80:
-        summary = "Yanıtınız güçlü ve akıcıydı."
+        summary = "Overall you provided a strong and fluent answer."
     elif overall_score >= 50:
-        summary = "Yanıtınız yeterliydi ancak bazı alanlarda gelişim var."
+        summary = "Your answer is generally sufficient but there is room for improvement."
     else:
-        summary = "Yanıtınızı yapı ve akıcılık açısından geliştirmeniz faydalı olur."
+        summary = "Your answer can be improved, especially in structure and fluency."
 
     strengths_parts: list[str] = []
     if total_words >= 80:
-        strengths_parts.append("Yanıtınız yeterince detaylı.")
+        strengths_parts.append("You provided a sufficiently detailed explanation.")
     if filler_ratio < 0.1:
-        strengths_parts.append(
-            "Dolgu kelime kullanımınız çok düşük; mesajınız net ve akıcı."
-        )
+        strengths_parts.append("Your use of filler words is very low, which keeps the message clear.")
     if not strengths_parts:
-        strengths_parts.append("Yanıtınız geliştirmek için iyi bir başlangıç.")
+        strengths_parts.append("Your answer forms a good starting point to build on.")
     strengths = " ".join(strengths_parts)
 
     improvements_parts: list[str] = []
     if total_words < 80:
-        improvements_parts.append(
-            "Yanıtınızı biraz daha uzatın ve somut örnekler ekleyin."
-        )
+        improvements_parts.append("Try to elaborate a bit more and add concrete examples.")
     if filler_ratio >= 0.2:
-        improvements_parts.append(
-            "Konuşurken “şey”, “yani” gibi dolgu kelimeleri azaltmaya çalışın."
-        )
+        improvements_parts.append("Focus on reducing filler words such as 'um' and 'uh' while speaking.")
     if overall_score < 80:
-        improvements_parts.append(
-            "Yanıtlarınızı net bir giriş, gelişme ve sonuçla yapılandırmaya çalışın."
-        )
+        improvements_parts.append("Practice structuring your answer with a clear beginning, middle and end.")
     improvements = (
         " ".join(improvements_parts)
         if improvements_parts
-        else "Benzer şekilde yanıtlamaya devam edebilirsiniz; seviye yeterli."
+        else "You can continue answering in a similar way; the current level is sufficient."
     )
     return summary, strengths, improvements
 
 
-def pause_control_from_answer_text(text: str, language: str = "tr") -> int:
+def pause_control_from_answer_text(text: str) -> int:
     """
-    0–100 pause / fluency proxy from a single answer transcript (filler density).
-    Mirrors score_transcript pause_control for one snippet.
+    0–100 pause / fluency proxy from a single answer transcript (English filler density).
+    Used as a text-based fallback when no PCM audio data is available.
     """
     words = [_normalize_word(w) for w in (text or "").split() if _normalize_word(w)]
     total_words = len(words)
     if total_words == 0:
         return 45
-    lang = (language or "tr").lower()
-    if lang.startswith("en"):
-        filler_count = sum(1 for w in words if w in FILLER_WORDS_EN)
-    else:
-        filler_count = sum(1 for w in words if w in FILLER_WORDS_TR)
+    filler_count = sum(1 for w in words if w in FILLER_WORDS_EN)
     filler_ratio = filler_count / total_words if total_words else 0.0
     if filler_ratio >= 0.4:
         return 0
@@ -83,7 +73,6 @@ def pause_control_from_answer_text(text: str, language: str = "tr") -> int:
 def score_transcript(
     transcript: str,
     duration_seconds: Optional[int] = None,
-    language: str = "tr",
 ) -> Dict[str, object]:
     """
     Compute basic metrics, scores and textual feedback from a transcript.
@@ -100,12 +89,9 @@ def score_transcript(
     words = [_normalize_word(w) for w in transcript.split() if _normalize_word(w)]
     total_words = len(words)
 
-    lang = (language or "tr").lower()
-    filler_list = FILLER_WORDS_EN if lang.startswith("en") else FILLER_WORDS_TR
-    filler_count = sum(1 for w in words if w in filler_list)
+    filler_count = sum(1 for w in words if w in FILLER_WORDS_EN)
     filler_ratio = filler_count / total_words if total_words else 0.0
 
-    # Basit metrikler
     metrics = {
         "total_words": total_words,
         "filler_count": filler_count,
@@ -137,10 +123,7 @@ def score_transcript(
         "overall": overall_score,
     }
 
-    if lang.startswith("tr"):
-        summary, strengths, improvements = _build_text_feedback_tr(total_words, filler_ratio, overall_score)
-    else:
-        summary, strengths, improvements = _build_text_feedback(total_words, filler_ratio, overall_score)
+    summary, strengths, improvements = _build_text_feedback(total_words, filler_ratio, overall_score)
 
     return {
         "metrics": metrics,
@@ -149,36 +132,3 @@ def score_transcript(
         "strengths": strengths,
         "improvements": improvements,
     }
-
-
-def _build_text_feedback(total_words: int, filler_ratio: float, overall_score: int) -> tuple[str, str, str]:
-    # Summary
-    if overall_score >= 80:
-        summary = "Overall you provided a strong and fluent answer."
-    elif overall_score >= 50:
-        summary = "Your answer is generally sufficient but there is room for improvement."
-    else:
-        summary = "Your answer can be improved, especially in structure and fluency."
-
-    # Strengths
-    strengths_parts = []
-    if total_words >= 80:
-        strengths_parts.append("You provided a sufficiently detailed explanation.")
-    if filler_ratio < 0.1:
-        strengths_parts.append("Your use of filler words is very low, which keeps the message clear.")
-    if not strengths_parts:
-        strengths_parts.append("Your answer forms a good starting point to build on.")
-    strengths = " ".join(strengths_parts)
-
-    # Improvements
-    improvements_parts = []
-    if total_words < 80:
-        improvements_parts.append("Try to elaborate a bit more and add concrete examples.")
-    if filler_ratio >= 0.2:
-        improvements_parts.append("Focus on reducing filler words such as 'um' and 'uh' while speaking.")
-    if overall_score < 80:
-        improvements_parts.append("Practice structuring your answer with a clear beginning, middle and end.")
-    improvements = " ".join(improvements_parts) if improvements_parts else "You can continue answering in a similar way; the current level is sufficient."
-
-    return summary, strengths, improvements
-

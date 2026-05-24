@@ -163,8 +163,7 @@ class ContentAnalyzer:
                 'am', 'it', 'its'
             }
 
-            # Split by space and punctuation
-            import re
+            # Split by space and punctuation (re already imported at module level)
             words = re.findall(r'\b\w+\b', text.lower())
 
             # Filter: remove stop words and short words (<3 char)
@@ -352,7 +351,7 @@ class ContentAnalyzer:
     ) -> Dict:
         """
         Comprehensive analysis of a single answer.
-        content_score = (relevance + keyword + star/technical) / 3, then length penalty applied.
+        content_score = (relevance + star/technical) / 2, then length penalty applied.
         """
         logger.info(f"Analyzing answer for question: {question[:50]}...")
 

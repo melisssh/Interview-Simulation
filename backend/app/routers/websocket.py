@@ -11,10 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..analysis.speech_metrics import (
     pause_frequency_score_from_pcm,
-    pause_frequency_score_from_segments,
     pcm_duration_seconds,
-    pcm_tone_variation_score,
-    pcm_volume_stability_score,
     words_per_minute,
 )
 from ..database import SessionLocal
@@ -70,8 +67,6 @@ def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "en") -> di
         "text": "",
         "speech_rate_wpm": None,
         "pause_frequency_score": None,
-        "volume_stability_score": None,
-        "tone_variation_score": None,
     }
     audio_bytes = base64.b64decode(audio_b64)
     if not audio_bytes or len(audio_bytes) < 3200:
@@ -92,15 +87,13 @@ def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "en") -> di
         dur = pcm_duration_seconds(len(audio_bytes))
         wc = len(text.split())
         wpm = words_per_minute(wc, dur)
+        # PCM-based pause detection: measures actual silence periods in raw audio,
+        # giving per-answer variation instead of the flat 82 from segment gaps.
         pause = pause_frequency_score_from_pcm(audio_bytes)
-        vol = pcm_volume_stability_score(audio_bytes)
-        tone = pcm_tone_variation_score(audio_bytes)
         return {
             "text": text,
             "speech_rate_wpm": wpm,
             "pause_frequency_score": pause,
-            "volume_stability_score": vol,
-            "tone_variation_score": tone,
         }
     finally:
         try:
@@ -125,10 +118,6 @@ def _ollama_chat(messages: list[dict], model: str | None = None):
         client = ollama.Client(host=host)
         return client.chat(model=target_model, messages=messages, options=options)
     return ollama.chat(model=target_model, messages=messages, options=options)
-
-
-def _looks_wrong_language(text: str, language: str) -> bool:
-    return False
 
 
 class InterviewSession:
@@ -295,6 +284,7 @@ RULES:
             "Do not repeat a topic already discussed. "
             "Ask ONLY ONE question. No preamble, no praise. RESPOND IN ENGLISH ONLY."
         )
+
         q = self._ask_ollama(prompt)
         if not q or _looks_wrong_language(q, self.language):
             # fallback to category description itself as a plain question
@@ -450,6 +440,7 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
             logger.info("Interview questions loaded: %d", len(iqs))
             for iq in iqs:
                 question_text = iq.question_text or ""
+                # Fix #2: question_text may be stored as JSON string {"text": "..."}
                 if question_text and question_text.strip().startswith("{"):
                     try:
                         parsed = json.loads(question_text)
@@ -604,6 +595,9 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
 
                     db = SessionLocal()
                     try:
+                        print(f"🟢 Saving answer\n")
+                        # Fix #1 & #3: use question_count (which prepared question is being answered)
+                        # rather than answer_count+1 (which overcounts due to follow-ups)
                         current_q_num = session.question_count
                         question_text = interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
 
@@ -663,6 +657,7 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
 
                     db = SessionLocal()
                     try:
+                        # Fix #1 & #3: use question_count (consistent with audio handler)
                         current_q_num = session.question_count
                         question_text = interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
                         answer_record = models.InterviewAnswer(

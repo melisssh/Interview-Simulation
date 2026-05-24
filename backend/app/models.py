@@ -94,32 +94,24 @@ class InterviewAnswer(Base):
     answer_text = Column(String(5000), nullable=True)
 
     # Content Metrics (Primary)
-    relevance_score = Column(Integer, nullable=True)  # 0-100
-    keyword_match_score = Column(Integer, nullable=True)  # 0-100
-    star_structure_score = Column(Integer, nullable=True)  # 0-100 (behavioral questions)
-    technical_accuracy_score = Column(Integer, nullable=True)  # 0-100 (technical questions)
+    relevance_score = Column(Integer, nullable=True)           # 0-100: semantic similarity to question
+    star_structure_score = Column(Integer, nullable=True)      # 0-100: STAR structure (behavioral only)
+    technical_accuracy_score = Column(Integer, nullable=True)  # 0-100: Ollama score (technical only)
 
-    # Speech Metrics (Secondary)
-    speech_rate_wpm = Column(Integer, nullable=True)  # words per minute
-    pause_frequency_score = Column(Integer, nullable=True)  # 0-100
-    volume_stability_score = Column(Integer, nullable=True)  # 0-100
-    tone_variation_score = Column(Integer, nullable=True)  # 0-100
-    confidence_tone_score = Column(Integer, nullable=True)  # 0-100
+    # Speech Metrics (Secondary) — set from PCM at WebSocket time; backfilled from transcript if missing
+    speech_rate_wpm = Column(Integer, nullable=True)           # words per minute
+    pause_frequency_score = Column(Integer, nullable=True)     # 0-100: fluency / pause control
 
     # Response Behavior
     answer_length_words = Column(Integer, nullable=True)
 
-    # Sentiment & Engagement
-    sentiment_score = Column(Integer, nullable=True)  # 0-100
-    engagement_score = Column(Integer, nullable=True)  # 0-100
-
-    # Non-verbal
-    eye_contact_score = Column(Integer, nullable=True)  # 0-100
-    head_stability_score = Column(Integer, nullable=True)  # 0-100
-    posture_score = Column(Integer, nullable=True)  # 0-100
+    # Non-verbal — set from MediaPipe video analysis
+    eye_contact_score = Column(Integer, nullable=True)         # 0-100
+    head_stability_score = Column(Integer, nullable=True)      # 0-100
+    posture_score = Column(Integer, nullable=True)             # 0-100
 
     # Composite Score
-    content_score = Column(Integer, nullable=True)  # content composite (primary)
+    content_score = Column(Integer, nullable=True)             # (relevance + star/technical) / 2 − length penalty
 
     # Feedback
     answer_feedback = Column(String(2000), nullable=True)
@@ -148,9 +140,9 @@ class Feedback(Base):
     actionable_recommendations = Column(String(3000), nullable=True)
 
     # Decision Indicators
-    technical_fit = Column(String(50), nullable=True)  # "Insufficient" / "Partial" / "Sufficient"
-    communication_fit = Column(String(50), nullable=True)  # "Weak" / "Average" / "Good"
-    motivation_level = Column(String(50), nullable=True)  # "Low" / "Medium" / "High"
+    technical_fit = Column(String(50), nullable=True)           # "Insufficient" / "Partial" / "Sufficient"
+    communication_fit = Column(String(50), nullable=True)       # "Weak" / "Average" / "Good" / "Strong"
+    motivation_level = Column(String(50), nullable=True)        # "Low" / "Average" / "Moderate" / "High"
     overall_recommendation = Column(String(50), nullable=True)  # "Strong No" / "No" / "Maybe" / "Yes" / "Strong Yes"
 
     created_at = Column(DateTime, default=datetime.utcnow)
