@@ -11,10 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..analysis.speech_metrics import (
     pause_frequency_score_from_pcm,
-    pause_frequency_score_from_segments,
     pcm_duration_seconds,
-    pcm_tone_variation_score,
-    pcm_volume_stability_score,
     words_per_minute,
 )
 from ..database import SessionLocal
@@ -53,8 +50,6 @@ def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "en") -> di
         "text": "",
         "speech_rate_wpm": None,
         "pause_frequency_score": None,
-        "volume_stability_score": None,
-        "tone_variation_score": None,
     }
     audio_bytes = base64.b64decode(audio_b64)
     if not audio_bytes or len(audio_bytes) < 3200:
@@ -78,14 +73,10 @@ def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "en") -> di
         # PCM-based pause detection: measures actual silence periods in raw audio,
         # giving per-answer variation instead of the flat 82 from segment gaps.
         pause = pause_frequency_score_from_pcm(audio_bytes)
-        vol = pcm_volume_stability_score(audio_bytes)
-        tone = pcm_tone_variation_score(audio_bytes)
         return {
             "text": text,
             "speech_rate_wpm": wpm,
             "pause_frequency_score": pause,
-            "volume_stability_score": vol,
-            "tone_variation_score": tone,
         }
     finally:
         try:
@@ -110,10 +101,6 @@ def _ollama_chat(messages: list[dict], model: str | None = None):
         client = ollama.Client(host=host)
         return client.chat(model=target_model, messages=messages, options=options)
     return ollama.chat(model=target_model, messages=messages, options=options)
-
-
-def _looks_wrong_language(text: str, language: str) -> bool:
-    return False
 
 
 class InterviewSession:
@@ -299,7 +286,7 @@ RULES:
         )
 
         q = self._ask_ollama(starter)
-        if not q or _looks_wrong_language(q, self.language):
+        if not q:
             q = self._get_fallback()
         self.question_count = 1
         self.history.append({"role": "assistant", "content": q})
@@ -345,7 +332,7 @@ RULES:
             logger.info(f"🔹 Follow-up triggered: q_index={current_q_index} followup={self.used_followups_per_q}")
 
             q = self._ask_ollama(prompt)
-            if not q or _looks_wrong_language(q, self.language):
+            if not q:
                 q = "Could you tell me more about that?"
             self.history.append({"role": "assistant", "content": q})
             logger.info(f"🔹 Follow-up response: {q[:80]}")
@@ -374,7 +361,7 @@ RULES:
         )
 
         q = self._ask_ollama(prompt)
-        if not q or _looks_wrong_language(q, self.language):
+        if not q:
             q = next_q_text
         self.history.append({"role": "assistant", "content": q})
         return q, False

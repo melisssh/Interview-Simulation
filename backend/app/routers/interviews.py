@@ -14,7 +14,7 @@ from .. import models
 from .auth import get_current_user, get_db
 from .ollama_service import generate_questions, fallback_questions, research_company, chat_response
 from ..cv_read import read_cv_plaintext
-from ..analysis import stt, scoring
+from ..analysis import stt
 from .messages import _, get_lang_from_header
 
 logger = logging.getLogger(__name__)

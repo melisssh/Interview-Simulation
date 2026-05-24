@@ -84,12 +84,11 @@ def run_full_analysis(interview_id: int) -> None:
         nv_parts    = [x for x in [eye_avg, posture_avg, head_avg] if x is not None]
         nonverbal_aggregate = int(sum(nv_parts) / len(nv_parts)) if nv_parts else None
 
-        # Fix #1: average answer length for feedback generation
         avg_words = _mean_int(lambda r: r.answer_length_words) or 0
 
-        # Fix #2: domain-aware averages — None when not applicable
-        tech_avg = _mean_int(lambda r: r.technical_accuracy_score)   # None for general
-        star_avg = _mean_int(lambda r: r.star_structure_score)        # None for technical
+        # Domain-aware averages — None when not applicable
+        tech_avg = _mean_int(lambda r: r.technical_accuracy_score)   # None for general domain
+        star_avg = _mean_int(lambda r: r.star_structure_score)        # None for technical domain
 
         aggregated_metrics = {
             "domain": interview.domain,
@@ -119,7 +118,7 @@ def run_full_analysis(interview_id: int) -> None:
             questions_answers=qa_pairs,
             metrics=aggregated_metrics,
             domain=interview.domain or "general",
-            language=interview.language or "tr",
+            language=interview.language or "en",
         )
 
         feedback = (
@@ -192,7 +191,7 @@ def _backfill_speech_from_transcript(db: Session, interview: models.Interview, a
         return
 
     # Pause score: keep real PCM-based value from WebSocket if present;
-    # fall back to text-based Turkish filler-word proxy only when missing.
+    # fall back to text-based English filler-word proxy only when missing.
     for ar in answers:
         if ar.pause_frequency_score is None:
             ar.pause_frequency_score = pause_control_from_answer_text(ar.answer_text or "")  # English fallback
@@ -291,7 +290,7 @@ def apply_content_metrics_to_interview_answers(db: Session, interview: models.In
     all_metrics: List[Any] = []
     row_blobs: List[dict] = []
     is_behavioral = interview.domain == "general"
-    lang = interview.language or "tr"
+    lang = interview.language or "en"
 
     for answer_row in answers:
         try:
