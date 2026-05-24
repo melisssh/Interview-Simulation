@@ -10,6 +10,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from ..analysis.speech_metrics import (
+    pause_frequency_score_from_pcm,
     pause_frequency_score_from_segments,
     pcm_duration_seconds,
     pcm_tone_variation_score,
@@ -33,6 +34,23 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Category → generation instruction (used in dynamic question generation)
+_CATEGORY_PROMPTS = {
+    # Technical
+    "intro":       "Ask the candidate to introduce themselves: their educational background, any internships, university projects, or part-time work, and what led them to apply. The candidate may be a new graduate or intern — adjust accordingly.",
+    "motivation":  "Ask specifically WHY they applied to THIS company and THIS role — what drew them here over other options. Focus on company and role fit, not career plans.",
+    "industry":    "If the candidate mentioned a specific technical concept or challenge, ask a focused follow-up on that. If they were vague or said nothing technical, ask a standard industry question: how would they approach a common engineering challenge in this sector (e.g. scalability, data consistency, real-time processing).",
+    "skills":      "If the candidate mentioned specific tools or technologies, go deeper — how they used it, what problem it solved, what trade-offs they encountered. If they were vague or said nothing specific, ask: what tools or technologies are they most comfortable with for this type of role? Do NOT assume or mention any technology they have not brought up themselves.",
+    "project":     "If the candidate described a specific project, probe it: what was the hardest technical decision, how did they debug a problem, or what would they do differently. If they gave no project details, ask them to describe a technical challenge they faced — however small — and how they approached it.",
+    "learning":    "If the candidate gave a specific learning example, probe it deeper — what they built, what they struggled with, what they discovered. If they were vague, ask: how do they approach learning a new technology from scratch, and what is the most recent thing they taught themselves.",
+    "team":        "If the candidate mentioned a team experience, ask about a specific technical disagreement — architecture choice, tech stack, code review — and how they resolved it. If no team experience was mentioned, ask how they would handle a situation where they disagree with a senior engineer's technical decision.",
+    # General
+    "career":      "Ask about their near-term career plan — what they want to learn or achieve in the next 1-2 years, and how this specific role helps them get there. Do NOT ask about motivation or why they applied — that was already covered.",
+    "strengths":   "Ask either about their greatest strength OR a real weakness they are working on — whichever feels more natural based on what the candidate has shared so far. Ask only ONE, not both.",
+    "company":     "Ask a direct question about the sector and the company's position in it. For example: who are the main competitors, what differentiates this company, or what recent development in the sector caught their attention. Do NOT ask 'what do you find interesting' — probe actual knowledge.",
+    "team_hr":     "Ask about a specific team experience from an internship, university group project, or part-time job. What was their role, what did they contribute, and how did they handle a disagreement or challenge within the team.",
+}
 
 _WS_WHISPER_MODEL = None
 
@@ -74,8 +92,7 @@ def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "en") -> di
         dur = pcm_duration_seconds(len(audio_bytes))
         wc = len(text.split())
         wpm = words_per_minute(wc, dur)
-        ranges = [(float(s.start), float(s.end)) for s in segs]
-        pause = pause_frequency_score_from_segments(ranges)
+        pause = pause_frequency_score_from_pcm(audio_bytes)
         vol = pcm_volume_stability_score(audio_bytes)
         tone = pcm_tone_variation_score(audio_bytes)
         return {
@@ -96,10 +113,10 @@ def _ollama_chat(messages: list[dict], model: str | None = None):
     if not ollama:
         raise RuntimeError("Ollama python package is not installed")
 
-    target_model = model or os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+    target_model = model or os.getenv("OLLAMA_MODEL", "llama3.2:3b")
     host = (os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST") or "").strip()
     options = {
-        "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.2")),
+        "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.55")),
         "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
         "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "300")),
     }
@@ -127,21 +144,19 @@ class InterviewSession:
         self.profile = profile or {}
         self.domain = interview.domain or "general"
         self.language = interview.language or "en"
-        self.base_questions = 7
-        self.min_questions = 5
-        self.max_questions = 12
         self.question_count = 0
         self.answer_count = 0
-        self.short_answers = 0
-        self.detailed_answers = 0
         self.used_followups_per_q = 0
         self.history: List[Dict] = []
         self.phase = self.PHASE_GREETING
-        self.cv_context = ""
-        if profile:
-            cv_text = profile.get("cv_text", "") or ""
-            dept = profile.get("department", "") or ""
-            self.cv_context = f"Candidate Profile:\n- Department: {dept}\n- CV Summary: {cv_text[:800]}"
+        self.last_question_text = ""  # for follow-up reference
+        self.min_questions = 5
+        self.max_questions = 7
+        self.base_questions = 7
+
+        # CV is intentionally not used in question generation.
+        # Questions are generated based on the conversation history only.
+
         self.company_context = (interview.company_context or "").strip()
         self.prepared_questions = []
         if prepared_questions:
@@ -157,23 +172,11 @@ class InterviewSession:
         position = self.interview.position or "Position"
         interview_type = "Technical Interview" if self.domain == "technical" else "General Interview"
 
-        context_block = ""
-        if self.cv_context:
-            context_block = f"\n\nCANDIDATE BACKGROUND (reference info for generating questions -- do not validate/compare answers against it):\n{self.cv_context}"
-
         extra_context = ""
         if self.company_context:
             extra_context = f"\n\nCOMPANY CONTEXT (reference info for generating questions):\n{self.company_context}"
 
         if self.domain == "technical":
-            kategori_bolumu = """  1) Introduction & Self-Presentation (education, past experiences, who you are)
-  2) Motivation & Career (why this role/department, career goals, 5-year plan)
-  3) Position & Industry Knowledge (industry trends, company's position in the market)
-  4) Technical Skills & Tool Knowledge (tools/technologies specific to the role and sector)
-  5) Project Experience (managed projects, task distribution, deadlines)
-  6) Problem Solving (challenges faced, approach, outcome)
-  7) Team & Organization (teamwork, reporting structure)"""
-
             return f"""You are a real technical interviewer at {company_name}.
 You are a technical expert who knows the position and sector well. Focus on assessing the candidate's technical knowledge and experience.
 The interview language is STRICTLY ENGLISH. Do NOT use Turkish.
@@ -183,33 +186,19 @@ POSITION:
 - Department: {department_name}
 - Sector: {self.interview.sector or 'Not specified'}
 - Type: {interview_type}
-{context_block}{extra_context}
-
-INTERVIEW FLOW:
-- INTRODUCTION: Brief welcome, do NOT introduce yourself by name. Move directly to the first question.
-- QUESTIONS: Ask the next prepared question from the list. Follow this ORDER:
-{kategori_bolumu}
-- CLOSING: When all prepared questions are done, short thank you and end.
+{extra_context}
 
 RULES:
-1. Speak ONLY in English.
-2. Ask EXACTLY ONE question per turn.
-3. NATURAL FLOW: Don't repeat the candidate's answer. You CAN reference their previous answer naturally.
-4. NO OVERPRAISING: Don't use "amazing", "wonderful", "excellent" etc. Be professional and natural.
-5. NO UNNECESSARY ACKNOWLEDGMENT: A simple "thanks" is enough, don't praise every answer.
-6. SHORT & CLEAR: Max 2 sentences per question. No fluff.
-7. CV REFERENCE RULE — CRITICAL: If you reference something from the candidate's CV that they have NOT mentioned during the interview, say "I see from your CV that..." or "According to your CV...". NEVER say "as you mentioned" or "you said" for CV information. Only use "as you mentioned" or "you said" if the candidate actually said it in this conversation.
+1. Ask EXACTLY ONE question per turn.
+2. NATURAL FLOW: Reference what the candidate actually said in this conversation. Do NOT invent facts.
+3. NO OVERPRAISING: Don't use "amazing", "wonderful", "excellent" etc. Be professional and natural.
+4. NO UNNECESSARY ACKNOWLEDGMENT: Don't praise every answer. Move directly to the next question.
+5. STICK TO CONVERSATION: Only refer to things the candidate has actually said in this interview. Never invent technologies, projects, or experiences they didn't mention.
+6. NEVER ASSUME SKILLS: Do NOT assume the candidate knows any specific technology, language, or tool unless they explicitly mentioned it. If unsure, ask first.
+7. OFF-TOPIC REDIRECT: If the candidate's answer is completely unrelated to the question, briefly acknowledge and redirect: ask them to answer the original question or move to the next relevant one.
 8. The candidate is APPLYING to the company, NOT working there. Never say "at your company" as if they work there."""
 
         else:
-            kategori_bolumu = """  1) Introduction & Self-Presentation (education, past experiences, how they describe themselves)
-  2) Motivation & Interest (why this position/company, what drives them, curiosity to learn)
-  3) Career Goals (short and long-term goals, where they see themselves in this role)
-  4) Strengths & Growth Areas (self-awareness, what they do to improve)
-  5) Company & Industry Knowledge (how well they know the company, their perspective on the sector, depth of research)
-  6) Communication & Team Fit (how they work with others, handling disagreements, receiving feedback)
-  7) Closing (any questions from the candidate, final impression)"""
-
             return f"""You are a real HR interviewer at {company_name}.
 Focus on assessing the candidate's motivation, genuine interest in the role, cultural fit, and overall potential.
 This is NOT a technical exam -- your goal is to understand who they are, what drives them, and how well they'd fit.
@@ -220,24 +209,17 @@ POSITION:
 - Department: {department_name}
 - Sector: {self.interview.sector or 'Not specified'}
 - Type: {interview_type}
-{context_block}{extra_context}
-
-INTERVIEW FLOW:
-- INTRODUCTION: Brief welcome, do NOT introduce yourself by name. Move directly to the first question.
-- QUESTIONS: Ask the next prepared question from the list. Follow this ORDER:
-{kategori_bolumu}
-- CLOSING: When all prepared questions are done, short thank you and end.
+{extra_context}
 
 RULES:
-1. Speak ONLY in English.
-2. Ask EXACTLY ONE question per turn.
-3. NATURAL FLOW: Don't repeat the candidate's answer. You CAN reference their previous answer naturally.
-4. NO OVERPRAISING: Don't use "amazing", "wonderful", "excellent" etc. Be professional and natural.
-5. NO UNNECESSARY ACKNOWLEDGMENT: A simple "thanks" is enough, don't praise every answer.
-6. SHORT & CLEAR: Max 2 sentences per question. No fluff.
-7. CV REFERENCE RULE — CRITICAL: If you reference something from the candidate's CV that they have NOT mentioned during the interview, say "I see from your CV that..." or "According to your CV...". NEVER say "as you mentioned" or "you said" for CV information. Only use "as you mentioned" or "you said" if the candidate actually said it in this conversation.
-8. FOCUS: Ask about motivation, interest, why they applied, and cultural fit. NOT technical tools or skills.
-9. The candidate is APPLYING to the company, NOT working there. Never say "at your company" as if they work there."""
+1. Ask EXACTLY ONE question per turn.
+2. NATURAL FLOW: Reference what the candidate actually said in this conversation. Do NOT invent facts.
+3. NO OVERPRAISING: Don't use "amazing", "wonderful", "excellent" etc. Be professional and natural.
+4. NO UNNECESSARY ACKNOWLEDGMENT: Don't praise every answer. Move directly to the next question.
+5. STICK TO CONVERSATION: Only refer to things the candidate has actually said in this interview. Never invent experiences they didn't mention.
+6. OFF-TOPIC REDIRECT: If the candidate's answer is completely unrelated to the question, briefly acknowledge and redirect: ask them to answer the original question or move to the next relevant one.
+7. FOCUS: Ask about motivation, interest, why they applied, and cultural fit. NOT technical tools or skills.
+8. The candidate is APPLYING to the company, NOT working there. Never say "at your company" as if they work there."""
 
     def _get_fallback(self) -> str:
         if self.phase == self.PHASE_GREETING:
@@ -269,7 +251,7 @@ RULES:
             messages.append({"role": "user", "content": prompt})
 
             response = _ollama_chat(
-                model=os.getenv("OLLAMA_MODEL", "llama3.1:8b"),
+                model=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
                 messages=messages,
             )
             out = (response.get("message", {}).get("content", "") or "").strip()
@@ -278,27 +260,70 @@ RULES:
             logger.error(f"Ollama LLM error: {e}")
             return None
 
-    def get_greeting(self) -> str:
-        """Phase 1: Greeting + first question."""
-        self.phase = self.PHASE_QUESTIONS
-        first_q = ""
-        if self.prepared_questions:
-            first_q = self.prepared_questions[0]["text"]
-        if not first_q:
-            first_q = "Could you briefly introduce yourself and your relevant background?"
+    def _generate_question_for_category(self, category: str) -> str:
+        """Generate a personalized question for the given category using conversation history."""
+        instruction = _CATEGORY_PROMPTS.get(category, f"Ask a relevant question about the candidate's {category}.")
 
-        starter = (
-            "Start the interview with a brief welcome (do NOT introduce yourself by name). "
-            "Then ask this EXACT first question -- do NOT change it, do NOT skip it, do NOT replace it with a different question:\n\n"
-            f'"{first_q}"\n\n'
-            "CRITICAL: You MUST ask this exact question as the first question. "
-            "Do NOT ask about motivation, goals, or anything else first. "
-            "The very first question MUST be about the candidate introducing themselves."
+        # Inject company/sector context for company category
+        if category == "company":
+            company_name = self.interview.company_name or "the company"
+            sector = self.interview.sector or "this sector"
+            instruction = (
+                f"Ask the candidate directly about their knowledge of {company_name}'s position in the {sector} sector. "
+                f"Probe for specific knowledge: Who are the main competitors? What differentiates {company_name}? "
+                f"What recent development in the sector have they noticed? Pick ONE of these angles and ask it directly."
+            )
+
+        # Extract key points from the last 2 candidate answers to drive adaptation
+        recent_context = ""
+        user_turns = [h["content"] for h in self.history if h["role"] == "user"]
+        if user_turns:
+            last_answers = user_turns[-2:]
+            snippets = " | ".join(a[:120] for a in last_answers)
+            recent_context = f"\nCandidate recently said: \"{snippets}\"\nBuild your question on these specifics — reference what they actually mentioned.\n"
+
+        # Inject last 3 asked questions in full to prevent repetition
+        asked_qs = [h["content"] for h in self.history if h["role"] == "assistant"][-3:]
+        if asked_qs:
+            topics_str = "\n- ".join(asked_qs)
+            recent_context += f"\nYou already asked these questions — do NOT ask about the same topic again:\n- {topics_str}\n"
+
+        prompt = (
+            f"Category instruction: {instruction}\n"
+            f"{recent_context}\n"
+            "Generate ONE focused interview question for this category. "
+            "Do not repeat a topic already discussed. "
+            "Ask ONLY ONE question. No preamble, no praise. RESPOND IN ENGLISH ONLY."
         )
-
-        q = self._ask_ollama(starter)
+        q = self._ask_ollama(prompt)
         if not q or _looks_wrong_language(q, self.language):
-            q = self._get_fallback()
+            # fallback to category description itself as a plain question
+            fallbacks = {
+                "intro":     "Could you walk us through your background and what led you to apply for this position?",
+                "motivation":"What motivated you to apply for this role, and where do you see yourself in 5 years?",
+                "industry":  "What do you know about the current trends in this industry and how this company fits into that landscape?",
+                "skills":    "Which tools and technologies relevant to this position are you most comfortable with?",
+                "project":   "Can you describe a project you worked on, how tasks were distributed, and how you handled deadlines?",
+                "learning":  "How do you keep up with new technologies, and can you give an example of learning something new for a project?",
+                "team":      "How do you typically collaborate with teammates, and how do you handle disagreements within a team?",
+                "career":    "Where do you see yourself in the next few years, and how does this role fit into your career path?",
+                "strengths": "What would you say is your greatest strength, and is there an area you are actively working to improve?",
+                "company":   "How familiar are you with our company, and what do you find most interesting about this sector?",
+            }
+            q = fallbacks.get(category, "Could you tell me more about your experience in this area?")
+        return q
+
+    def get_greeting(self) -> str:
+        """Phase 1: Greeting + hardcoded intro question."""
+        self.phase = self.PHASE_QUESTIONS
+        company_name = self.interview.company_name or "our company"
+        position = self.interview.position or "this position"
+        q = (
+            f"Welcome to {company_name} for the {position} position. "
+            f"Could you start by introducing yourself — your educational background, "
+            f"any relevant experience such as internships or projects, and what brought you to apply for this role?"
+        )
+        self.last_question_text = q
         self.question_count = 1
         self.history.append({"role": "assistant", "content": q})
         return q
@@ -313,7 +338,7 @@ RULES:
         is_struggling = any(w in low for w in struggling_words)
         return {
             "word_count": wc,
-            "is_short": wc < 25,
+            "is_short": wc < 35,
             "is_detailed": wc > 120,
             "is_struggling": is_struggling,
         }
@@ -324,63 +349,62 @@ RULES:
         self.history.append({"role": "user", "content": transcript})
 
         q_quality = self._answer_quality(transcript)
-        is_shallow = q_quality["is_short"] or q_quality["is_struggling"]
+        is_shallow = q_quality["is_short"]
         logger.info(f"🔹 handle_answer: q#{self.question_count} answer#{self.answer_count} words={q_quality['word_count']} short={q_quality['is_short']} struggling={q_quality['is_struggling']} shallow={is_shallow} followups={self.used_followups_per_q}")
 
         # Which prepared question are we on?
         current_q_index = min(self.question_count - 1, len(self.prepared_questions) - 1) if self.prepared_questions else -1
         total_prepared = len(self.prepared_questions)
 
-        # Check if we should ask a follow-up (shallow answer, haven't used follow-up yet for this question)
-        if is_shallow and self.used_followups_per_q < 1 and current_q_index >= 0 and current_q_index < total_prepared:
-            self.used_followups_per_q += 1
-            q_text = self.prepared_questions[current_q_index]["text"]
-            prompt = (
-                f"Candidate's answer: {transcript}\n"
-                f"The question was: {q_text}\n"
-                "The candidate's answer was brief. Ask ONE short follow-up to get more detail, then we'll move to the next topic. Be natural."
-            )
-            logger.info(f"🔹 Follow-up triggered: q_index={current_q_index} followup={self.used_followups_per_q}")
+        # Categories where follow-up is allowed (0-based index)
+        # Technical:  4=Project Experience, 5=Learning & Adaptability, 6=Team & Organization
+        # General:    0=Introduction, 3=Strengths & Growth Areas, 5=Communication & Team Fit
+        if self.domain == "technical":
+            followup_allowed_indices = {4, 5, 6}
+        else:
+            followup_allowed_indices = {0, 3, 5}
 
+        # Follow-up: short answer on allowed category
+        if is_shallow and self.used_followups_per_q < 1 and current_q_index in followup_allowed_indices and current_q_index < total_prepared:
+            self.used_followups_per_q += 1
+            current_category = self.prepared_questions[current_q_index]["text"] if self.prepared_questions else ""
+
+            prompt = (
+                f"The candidate was asked: {self.last_question_text}\n"
+                f"They answered briefly: {transcript}\n"
+                "Their answer was too short. Ask ONE natural follow-up question that goes deeper on exactly what they mentioned. "
+                "Do NOT introduce a new topic. Do NOT drift. Do NOT praise. RESPOND IN ENGLISH ONLY."
+            )
+            logger.info(f"🔹 Follow-up triggered: q_index={current_q_index} category={current_category}")
             q = self._ask_ollama(prompt)
             if not q or _looks_wrong_language(q, self.language):
-                q = "Could you tell me more about that?"
+                q = "Could you elaborate on that a bit more?"
             self.history.append({"role": "assistant", "content": q})
-            logger.info(f"🔹 Follow-up response: {q[:80]}")
             return q, False
 
-        # Move to next prepared question
-        logger.info(f"🔹 Moving to next question: current_q_index={current_q_index} -> next={current_q_index + 1} total={total_prepared}")
+        # Move to next category
         self.used_followups_per_q = 0
         next_q_index = current_q_index + 1
+        logger.info(f"🔹 Moving to category index {next_q_index} / {total_prepared}")
 
         if next_q_index >= total_prepared:
             self.phase = self.PHASE_ENDED
-            q = "Thank you for participating in this interview!"
+            q = "Thank you for your time and for sharing your experiences with us."
             self.history.append({"role": "assistant", "content": q})
             return q, True
 
-        next_q = self.prepared_questions[next_q_index]
-        next_q_text = next_q["text"]
+        next_category = self.prepared_questions[next_q_index]["text"]
         self.question_count = next_q_index + 1
 
-        prompt = (
-            f"The candidate answered the previous question. "
-            f"Now ask the following next question naturally, you may briefly acknowledge their answer first but keep it very short (1-2 words max):\n\n"
-            f'"{next_q_text}"\n\n'
-            "Ask this question. Do NOT change or replace it."
-        )
-
-        q = self._ask_ollama(prompt)
-        if not q or _looks_wrong_language(q, self.language):
-            q = next_q_text
+        q = self._generate_question_for_category(next_category)
+        self.last_question_text = q
         self.history.append({"role": "assistant", "content": q})
         return q, False
 
 
 @router.websocket("/ws/interview/{interview_id}")
 async def websocket_interview(websocket: WebSocket, interview_id: int):
-    print(f"\n🔵🔵🔵 WS HANDLER START: interview_id={interview_id} 🔵🔵🔵\n")
+    logger.info("WebSocket handler start: interview_id=%s", interview_id)
 
     # Token check (from query param)
     token = websocket.query_params.get("token")
@@ -389,7 +413,7 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
         return
     try:
         import jwt
-        payload = jwt.decode(token, os.getenv("JWT_SECRET_KEY", "sizin-gizli-anahtar-buraya-degisitirin"), algorithms=["HS256"])
+        payload = jwt.decode(token, os.getenv("JWT_SECRET_KEY"), algorithms=["HS256"])
         ws_user_id = payload.get("user_id")
         if not ws_user_id:
             await websocket.close(code=4001, reason="Invalid token")
@@ -399,19 +423,13 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
         return
 
     await websocket.accept()
-    print(f"🔵 WebSocket accepted\n")
-    logger.info(f"🔵 WebSocket opened: interview_id={interview_id}")
+    logger.info("WebSocket accepted: interview_id=%s", interview_id)
     ws_lang = get_lang_from_header(websocket.headers.get("accept-language"))
 
-    print(f"🔵 Creating SessionLocal...\n")
     db = SessionLocal()
-    print(f"🔵 SessionLocal created\n")
 
     try:
-        print(f"🔵 Try block started\n")
         interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
-        print(f"🔵 Interview query done: {interview is not None}\n")
-        logger.info(f"Interview query done: {interview is not None}")
 
         if not interview:
             await websocket.send_json({"type": "error", "message": _("interview_not_found", ws_lang)})
@@ -426,14 +444,18 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
         # Fetch interview questions from database
         interview_questions = {}
         if interview:
-            print(f"🔵 Loading interview questions...\n")
             iqs = db.query(models.InterviewQuestion).filter(
                 models.InterviewQuestion.interview_id == interview_id
             ).order_by(models.InterviewQuestion.order).all()
-            print(f"🔵 Interview questions loaded: {len(iqs)}\n")
-            logger.info(f"Interview questions loaded: {len(iqs)}")
+            logger.info("Interview questions loaded: %d", len(iqs))
             for iq in iqs:
                 question_text = iq.question_text or ""
+                if question_text and question_text.strip().startswith("{"):
+                    try:
+                        parsed = json.loads(question_text)
+                        question_text = parsed.get("text", question_text)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
                 if not question_text and iq.question_id:
                     q = db.query(models.Question).filter(
                         models.Question.id == iq.question_id
@@ -445,27 +467,13 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                     "id": iq.id
                 }
 
-        # Fetch profile and CV data
+        # Profile data (no CV — questions are based on conversation history only)
         profile_data = {}
         if interview:
             profile = db.query(models.Profile).filter(models.Profile.user_id == interview.user_id).first()
             if profile:
-                profile_data = {
-                    "university": profile.university or "",
-                    "department": profile.department or "",
-                    "cv_text": ""
-                }
-                # Read CV text if available
-                if profile.cv_path:
-                    from ..cv_read import read_cv_plaintext
-                    cv_text = read_cv_plaintext(profile.cv_path)
-                    if cv_text:
-                        profile_data["cv_text"] = cv_text
-                        logger.info(f"CV loaded: {len(cv_text)} characters")
-                    else:
-                        logger.warning(f"Could not read CV: {profile.cv_path}")
+                profile_data = {}
 
-        print(f"🔵 Profile and CV loaded\n")
         if not interview:
             await websocket.send_json({"type": "error", "message": _("interview_not_found", ws_lang)})
             return
@@ -478,22 +486,16 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
             await websocket.send_json({"type": "error", "message": _("ws_prep_failed", iv_lang)})
             return
 
-        print(f"🔵 Creating InterviewSession...\n")
         session = InterviewSession(interview, profile=profile_data, prepared_questions=interview_questions)
-        print(f"🔵 InterviewSession created: domain={session.domain}, language={session.language}\n")
-        logger.info(f"✅ Session created: domain={session.domain}, language={session.language}")
+        logger.info("Session created: domain=%s language=%s", session.domain, session.language)
     except Exception as e:
-        print(f"\n❌❌❌ EXCEPTION: {e}\n")
-        import traceback
-        print(f"\n{traceback.format_exc()}\n")
-        logger.error(f"❌ WebSocket setup error: {e}", exc_info=True)
+        logger.error("WebSocket setup error: %s", e, exc_info=True)
         try:
             await websocket.send_json({"type": "error", "message": f"{_('interview_not_found', ws_lang)}: {str(e)}"})
         except:
             pass
         return
     finally:
-        print(f"🔵 Finally block: calling db.close()\n")
         db.close()
 
     async def safe_send(payload: dict) -> bool:
@@ -525,32 +527,24 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
             status_db.close()
 
     try:
-        print(f"\n🟢🟢🟢 MAIN LOOP STARTED: interview_id={interview_id} 🟢🟢🟢\n")
-        logger.info(f"Interview session started: interview_id={interview_id}")
+        logger.info("Interview session started: interview_id=%s", interview_id)
 
         while True:
             try:
-                print(f"🟢 Waiting for message...\n")
                 raw = await websocket.receive_text()
-                print(f"🟢 Message received: {raw[:100]}\n")
                 data = json.loads(raw)
-            except json.JSONDecodeError as e:
-                print(f"🔴 JSON decode error: {e}\n")
+            except json.JSONDecodeError:
                 continue
             except WebSocketDisconnect:
-                print(f"🔴 Client disconnected\n")
-                logger.info(f"Client disconnected: {interview_id}")
+                logger.info("Client disconnected: interview_id=%s", interview_id)
                 break
             except Exception as e:
-                print(f"🔴 receive_text error: {e}\n")
-                logger.error(f"receive_text error: {e}", exc_info=True)
+                logger.error("receive_text error: %s", e, exc_info=True)
                 break
 
             msg_type = data.get("type")
-            print(f"🟢 Message type: {msg_type}\n")
 
             if msg_type == "init":
-                print(f"🟢 Processing init message\n")
                 session.domain = data.get("domain", session.domain)
                 session.language = data.get("language", session.language)
                 session.base_questions = data.get("max_questions", 7)
@@ -580,20 +574,15 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                     break
 
             elif msg_type == "audio":
-                print(f"🟢 Processing audio message\n")
                 audio_b64 = data.get("audio")
                 if not audio_b64:
-                    print(f"🔴 No audio data\n")
                     continue
 
                 try:
-                    print(f"🟢 Generating transcript...\n")
                     tm = _transcribe_pcm_b64_with_metrics(audio_b64, language=session.language)
                     transcript = (tm.get("text") or "").strip()
-                    print(f"🟢 Transcript: {transcript[:50]}\n")
 
                     if not transcript:
-                        print(f"🔴 Transcript empty, AI asking again\n")
                         re_prompt = (
                             "The candidate's answer was not audible. "
                             "Politely ask them to repeat in a short, natural way."
@@ -613,13 +602,9 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
 
                     logger.info(f"Transcription: {transcript[:100]}...")
 
-                    # Save answer to database BEFORE handle_answer increments counter
-                    print(f"🟢 Opening database session\n")
                     db = SessionLocal()
                     try:
-                        print(f"🟢 Saving answer\n")
-                        # answer_count will be incremented in handle_answer, so use current value
-                        current_q_num = session.answer_count + 1  # Next question number (since we increment in handle_answer)
+                        current_q_num = session.question_count
                         question_text = interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
 
                         answer_record = models.InterviewAnswer(
@@ -632,23 +617,16 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                         )
                         db.add(answer_record)
                         db.commit()
-                        print(f"🟢 Answer saved: {current_q_num}\n")
-                        logger.info(f"Saved answer {current_q_num} to database")
+                        logger.info("Saved answer %d for interview %s", current_q_num, interview_id)
                     except Exception as save_error:
-                        print(f"🔴 Save error: {save_error}\n")
-                        logger.error(f"Error saving answer: {save_error}")
+                        logger.error("Error saving answer: %s", save_error)
                     finally:
                         db.close()
 
-                    print(f"🟢 Calling handle_answer\n")
                     response_text, is_ended = session.handle_answer(transcript)
-                    print(f"🟢 handle_answer completed: is_ended={is_ended}\n")
 
                     if is_ended:
-                        print(f"🟢 Interview ended!\n")
                         update_interview_status("analyzing", "ws_auto_end")
-
-                        print(f"🟢 Sending ended message\n")
                         if not await safe_send({
                             "type": "ended",
                             "message": _("ws_completed", session.language),
@@ -660,7 +638,6 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                             break
                         break
 
-                    print(f"🟢 Sending next question: q_num={session.question_count}\n")
                     if not await safe_send({
                         "type": "question",
                         "question": response_text,
@@ -669,20 +646,14 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                         "total": session.max_questions,
                         "phase": session.phase,
                     }):
-                        print(f"🔴 safe_send failed\n")
                         break
-                    print(f"🟢 Question sent!\n")
 
                 except Exception as e:
-                    print(f"🔴 Audio processing exception: {e}\n")
-                    import traceback
-                    print(f"{traceback.format_exc()}\n")
-                    logger.error(f"Audio processing error: {e}")
+                    logger.error("Audio processing error: %s", e, exc_info=True)
                     if not await safe_send({"type": "error", "message": str(e)}):
                         break
 
             elif msg_type == "test_answer":
-                print(f"🟢 Processing test answer message\n")
                 transcript = (data.get("text") or "").strip()
                 if not transcript:
                     transcript = f"Dummy answer {session.answer_count + 1}: Silent test response."
@@ -692,7 +663,7 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
 
                     db = SessionLocal()
                     try:
-                        current_q_num = session.answer_count + 1
+                        current_q_num = session.question_count
                         question_text = interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
                         answer_record = models.InterviewAnswer(
                             interview_id=interview_id,

@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, SessionLocal
 from . import models
-from .routers import auth, interviews, websocket, analysis
+from .routers import auth, interviews, websocket, analysis, tts
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +36,9 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?",
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -46,6 +46,7 @@ app.include_router(auth.router, tags=["auth"])
 app.include_router(interviews.router, tags=["interviews"])
 app.include_router(websocket.router, tags=["websocket"])
 app.include_router(analysis.router, tags=["analysis"])
+app.include_router(tts.router, tags=["tts"])
 
 
 @app.get("/health")

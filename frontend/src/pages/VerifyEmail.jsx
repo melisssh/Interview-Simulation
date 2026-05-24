@@ -24,14 +24,14 @@ export default function VerifyEmail() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
     })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.detail) {
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}))
+        if (res.ok) {
           setStatus('success')
-          setMessage(data.detail)
+          setMessage(data.detail || 'Email verified successfully.')
         } else {
           setStatus('error')
-          setMessage('Verification failed.')
+          setMessage(data.detail || 'Verification failed.')
         }
       })
       .catch(() => {

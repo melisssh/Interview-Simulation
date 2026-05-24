@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 
 import { API } from '../api'
+import TalkingAvatar from '../components/TalkingAvatar'
 const SILENCE_SEND_MS = 1200
-const MIC_RMS_THRESHOLD = 0.006
-const MIN_CHUNKS_TO_SEND = 3
+const MIC_RMS_THRESHOLD = 0.002
+const MIN_CHUNKS_TO_SEND = 2
 
 function floatChunksToBase64Int16(chunks) {
   const length = chunks.reduce((sum, arr) => sum + arr.length, 0)
@@ -25,6 +26,9 @@ function floatChunksToBase64Int16(chunks) {
   return btoa(binary)
 }
 
+const BG_IMAGES = ['/bg-office1.jpg', '/bg-office2.jpg', '/bg-office3.jpg', '/bg-office4.jpg']
+const BG_URL = BG_IMAGES[Math.floor(Math.random() * BG_IMAGES.length)]
+
 export default function InterviewRun() {
   const { id } = useParams()
   const [interview, setInterview] = useState(null)
@@ -41,10 +45,13 @@ export default function InterviewRun() {
   const [phase, setPhase] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [interviewEnded, setInterviewEnded] = useState(false)
+  const [userName, setUserName] = useState('You')
   const isProcessingRef = useRef(false)
   const interviewEndedRef = useRef(false)
+  const uploadingRef = useRef(false)
   const leavingRef = useRef(false)
 
+  const avatarRef = useRef(null)
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const mediaRecorderRef = useRef(null)
@@ -67,7 +74,7 @@ export default function InterviewRun() {
     if (!recording) return
     const handleBeforeUnload = (e) => {
       e.preventDefault()
-      e.returnValue = tRef.current.leaveWarning
+      e.returnValue = tRef.current?.leaveWarning || 'Are you sure you want to leave?'
       return e.returnValue
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
@@ -118,7 +125,9 @@ export default function InterviewRun() {
   tRef.current = t
 
   const stopSpeaking = useCallback(() => {
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
+    if (avatarRef.current) {
+      avatarRef.current.stop()
+    } else if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel()
     }
     speechBlockedRef.current = false
@@ -178,21 +187,17 @@ export default function InterviewRun() {
           setIsProcessing(false)
           isProcessingRef.current = false
           setMicStatus(tRef.current.reading)
-          if (data.question && typeof window !== 'undefined' && window.speechSynthesis && !leavingRef.current) {
+          if (data.question && !leavingRef.current) {
             speechBlockedRef.current = true
-            window.speechSynthesis.cancel()
-            const u = new SpeechSynthesisUtterance(data.question)
-            u.lang = 'en-US'
-            u.rate = 0.92
-            u.onend = () => {
+            if (avatarRef.current) {
+              avatarRef.current.speak(data.question, () => {
+                speechBlockedRef.current = false
+                setMicStatus(tRef.current.listening)
+              })
+            } else {
               speechBlockedRef.current = false
               setMicStatus(tRef.current.listening)
             }
-            u.onerror = () => {
-              speechBlockedRef.current = false
-              setMicStatus(tRef.current.listening)
-            }
-            window.speechSynthesis.speak(u)
           } else if (!leavingRef.current) {
             setMicStatus(tRef.current.listening)
           }
@@ -206,21 +211,16 @@ export default function InterviewRun() {
           setPhase('closing')
 
           const closingText = data.question || data.message || tRef.current.completed
-          if (closingText && typeof window !== 'undefined' && window.speechSynthesis && !leavingRef.current) {
+          if (closingText && !leavingRef.current) {
             speechBlockedRef.current = true
-            window.speechSynthesis.cancel()
-            const u = new SpeechSynthesisUtterance(closingText)
-            u.lang = 'en-US'
-            u.rate = 0.92
-            u.onend = () => {
-              speechBlockedRef.current = false
-              setTimeout(() => { stopAndUploadVideo() }, 1000)
+            if (avatarRef.current) {
+              avatarRef.current.speak(closingText, () => {
+                speechBlockedRef.current = false
+                setTimeout(() => { stopAndUploadVideo() }, 1000)
+              })
+            } else {
+              setTimeout(() => { stopAndUploadVideo() }, 1500)
             }
-            u.onerror = () => {
-              speechBlockedRef.current = false
-              setTimeout(() => { stopAndUploadVideo() }, 1000)
-            }
-            window.speechSynthesis.speak(u)
           } else {
             setTimeout(() => { stopAndUploadVideo() }, 1500)
           }
@@ -292,6 +292,14 @@ export default function InterviewRun() {
   }, [sendPendingAudio])
 
   useEffect(() => {
+    if (!token) return
+    fetch(`${API}/profile`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(data => { if (data.full_name) setUserName(data.full_name) })
+      .catch(() => {})
+  }, [token])
+
+  useEffect(() => {
     if (!token) {
       navigate('/login')
       return
@@ -301,11 +309,11 @@ export default function InterviewRun() {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => {
-        if (res.status === 401 || res.status === 403) navigate('/login')
+        if (res.status === 401 || res.status === 403) { navigate('/login'); return null }
         if (!res.ok) throw new Error(t.fetchError)
         return res.json()
       })
-      .then(setInterview)
+      .then((data) => { if (data) setInterview(data) })
       .catch(() => setError(t.fetchInfoError))
       .finally(() => setLoading(false))
   }, [id, token, navigate])
@@ -327,6 +335,7 @@ export default function InterviewRun() {
         return
       }
       setInterview((prev) => (prev ? { ...prev, status: 'preparing', preparation_error: null } : prev))
+      setRetrying(false)
     } catch {
       setError('Connection error')
       setRetrying(false)
@@ -366,7 +375,9 @@ export default function InterviewRun() {
       if (processorRef.current) { try { processorRef.current.disconnect() } catch { /* ignore */ } }
       if (sourceRef.current) { try { sourceRef.current.disconnect() } catch { /* ignore */ } }
       if (muteGainRef.current) { try { muteGainRef.current.disconnect() } catch { /* ignore */ } }
-      if (audioContextRef.current) { try { audioContextRef.current.close() } catch { /* ignore */ } }
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        try { audioContextRef.current.close() } catch { /* ignore */ }
+      }
     }
   }, [])
 
@@ -410,7 +421,8 @@ export default function InterviewRun() {
   }
 
   async function stopAndUploadVideo() {
-    if (uploading || interviewEnded) return
+    if (uploadingRef.current) return
+    uploadingRef.current = true
     setUploading(true)
     setRecording(false)
 
@@ -453,10 +465,11 @@ export default function InterviewRun() {
   const isAnalyzed = interview.status === 'analyzed'
   const isAnalysisFailed = interview.status === 'analysis_failed'
 
-  if (isAnalyzing || isAnalyzed || isAnalysisFailed) {
-    navigate(`/interview/${id}/sonuc`)
-    return null
-  }
+  useEffect(() => {
+    if (interview?.status === 'analyzing' || interview?.status === 'analyzed' || interview?.status === 'analysis_failed') {
+      navigate(`/interview/${id}/result`)
+    }
+  }, [interview?.status, id, navigate])
 
   const cardStyle = {
     maxWidth: 420, width: '100%', margin: '0 1.5rem', padding: '2.25rem 2rem',
@@ -552,49 +565,68 @@ export default function InterviewRun() {
           <button type="button" onClick={() => setShowLeaveModal(true)} style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6, padding: '0.3rem 0.75rem', cursor: 'pointer', fontSize: '0.85rem' }}>{t.leaveConfirm}</button>
         </div>
       )}
-      <main style={{ maxWidth: 1100, margin: '0 auto', padding: recording && !interviewEnded ? '3.5rem 1.5rem 2rem' : '2rem 1.5rem', display: 'grid', gap: '1.5rem', gridTemplateColumns: '3fr 2fr' }}>
-        <section style={{ background: '#000', borderRadius: 12, overflow: 'hidden', minHeight: 320 }}>
-          <video ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} autoPlay muted />
-        </section>
+      <main style={{ maxWidth: 1400, margin: '0 auto', padding: recording && !interviewEnded ? '3.5rem 1rem 1.5rem' : '2rem 1rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
 
-        <section style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div style={{ background: '#fff', borderRadius: 12, padding: '1.5rem', border: '1px solid #e5e7eb', flex: 1, display: 'flex', flexDirection: 'column' }}>
-            {recording && !aiQuestion && (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <p style={{ fontSize: '0.95rem', color: '#6b7280' }}>{t.connecting}</p>
-              </div>
-            )}
-
-            {recording && aiQuestion && (
-              <>
-                <div style={{ flex: 1, padding: '1rem', borderRadius: 8, background: '#f8fafc', marginBottom: '1rem', whiteSpace: 'pre-wrap', fontSize: '0.95rem', lineHeight: 1.7, color: '#1e293b' }}>
-                  {aiQuestion}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
-                    {isProcessing ? t.thinking : `🎤 ${micStatus}`}
-                  </span>
-                  {!interviewEnded && (
-                    <button
-                      type="button"
-                      onClick={sendPendingAudio}
-                      style={{
-                        padding: '0.5rem 1rem', background: '#111', color: '#fff', borderRadius: 8,
-                        border: 'none', fontWeight: 500, cursor: 'pointer', fontSize: '0.85rem',
-                      }}
-                    >
-                      {t.sendBtn}
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-
-
-            {uploading && <p style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.5rem' }}>{t.uploading}</p>}
-            {error && <p style={{ color: '#dc2626', fontSize: '0.9rem', marginTop: '0.5rem' }}>{error}</p>}
+        {/* Video tiles — side by side like Zoom */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', height: '65vh' }}>
+          {/* AI avatar tile */}
+          <div style={{ position: 'relative', backgroundImage: `url(${BG_URL})`, backgroundSize: 'cover', backgroundPosition: 'center', borderRadius: 12, overflow: 'hidden' }}>
+            <TalkingAvatar ref={avatarRef} style={{ width: '100%', height: '100%' }} />
+            <span style={{ position: 'absolute', bottom: 10, left: 12, fontSize: '0.75rem', color: 'rgba(255,255,255,0.7)', background: 'rgba(0,0,0,0.45)', padding: '2px 8px', borderRadius: 4 }}>
+              AI Interviewer
+            </span>
           </div>
-        </section>
+
+          {/* User camera tile */}
+          <div style={{ position: 'relative', background: '#111', borderRadius: 12, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <video
+              ref={videoRef}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              autoPlay muted
+            />
+            {!recording && (
+              <span style={{ position: 'absolute', color: 'rgba(255,255,255,0.35)', fontSize: '0.85rem' }}>Camera preview</span>
+            )}
+            <span style={{ position: 'absolute', bottom: 10, left: 12, fontSize: '0.75rem', color: 'rgba(255,255,255,0.7)', background: 'rgba(0,0,0,0.45)', padding: '2px 8px', borderRadius: 4 }}>
+              {userName}
+            </span>
+          </div>
+        </div>
+
+        {/* Question / status panel */}
+        <div style={{ background: '#fff', borderRadius: 12, padding: '1.25rem 1.5rem', border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {recording && !aiQuestion && (
+            <p style={{ fontSize: '0.95rem', color: '#6b7280', textAlign: 'center', margin: 0 }}>{t.connecting}</p>
+          )}
+
+          {recording && aiQuestion && (
+            <>
+              <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.95rem', lineHeight: 1.7, color: '#1e293b' }}>
+                {aiQuestion}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid #f1f5f9', paddingTop: '0.75rem' }}>
+                <span style={{ fontSize: '0.85rem', color: '#6b7280' }}>
+                  {isProcessing ? t.thinking : `🎤 ${micStatus}`}
+                </span>
+                {!interviewEnded && (
+                  <button
+                    type="button"
+                    onClick={sendPendingAudio}
+                    style={{
+                      padding: '0.45rem 1rem', background: '#111', color: '#fff', borderRadius: 8,
+                      border: 'none', fontWeight: 500, cursor: 'pointer', fontSize: '0.85rem',
+                    }}
+                  >
+                    {t.sendBtn}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+
+          {uploading && <p style={{ fontSize: '0.85rem', color: '#6b7280', margin: 0 }}>{t.uploading}</p>}
+          {error && <p style={{ color: '#dc2626', fontSize: '0.9rem', margin: 0 }}>{error}</p>}
+        </div>
       </main>
 
       {showLeaveModal && (

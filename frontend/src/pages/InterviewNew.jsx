@@ -48,7 +48,7 @@ export default function InterviewNew() {
 
   useEffect(() => {
     if (!token) { navigate('/login'); return }
-    fetch(`${API}/categories`).then((res) => res.json()).then(setCategories).catch(() => setError('Could not load categories'))
+    fetch(`${API}/categories`, { headers: { Authorization: `Bearer ${token}` } }).then((res) => res.json()).then(setCategories).catch(() => setError('Could not load categories'))
   }, [token, navigate])
 
   async function handleSubmit(e) {

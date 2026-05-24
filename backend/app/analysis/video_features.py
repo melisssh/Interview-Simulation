@@ -137,9 +137,8 @@ def _opencv_fallback(video_path: str, sample_every: int = 6) -> Dict[str, Any]:
         return {}
 
     detection_rate = detected / sampled
-    # Yüz hiç tespit edilemedi — sahte default vermek yerine boş dön
     if detection_rate == 0:
-        logger.info("OpenCV fallback: yüz tespit edilemedi (detection_rate=0), nonverbal atlanıyor.")
+        logger.info("OpenCV fallback: no face detected (detection_rate=0), skipping nonverbal.")
         return {}
 
     if len(face_centers) < 2:

@@ -64,11 +64,7 @@ export default function ForgotPassword() {
           </label>
           {message && <p style={{ color: '#059669', margin: 0, fontSize: '0.95rem' }}>{message}</p>}
           {error && <p style={{ color: '#dc2626', margin: 0, fontSize: '0.9rem' }}>{error}</p>}
-          <button type="submit" disabled={loading} style={{
-            padding: '0.75rem 1.5rem', background: '#111', color: '#fff', borderRadius: 8,
-            border: 'none', fontWeight: 500, fontSize: '1rem',
-            cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1,
-          }}>
+          <button type="submit" disabled={loading} className="primary-btn" style={{ width: '100%' }}>
             {loading ? 'Sending...' : 'Send'}
           </button>
         </form>

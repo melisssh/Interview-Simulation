@@ -16,7 +16,7 @@ def _ollama_chat(messages: list[dict], model: str | None = None):
     if not ollama:
         raise RuntimeError("Ollama python package is not installed")
 
-    target_model = model or os.getenv("OLLAMA_MODEL", "llama3.1:latest")
+    target_model = model or os.getenv("OLLAMA_MODEL", "llama3.2:3b")
     host = (os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST") or "").strip()
     options = {
         "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.3")),
@@ -103,6 +103,7 @@ def _validate_questions(questions: List[Dict], n_questions: int) -> List[Dict]:
     return cleaned
 
 
+
 def generate_questions(
     *,
     position: str,
@@ -151,19 +152,28 @@ Company research context:
 
 Generate EXACTLY {n_questions} interview questions in ENGLISH, following this EXACT order:
 1) Introduction & Self-Presentation (education, past experiences, who you are)
+   Example: "Could you walk us through your background and what led you to apply for this position?"
 2) Motivation & Career (why this role/department, career goals, 5-year plan)
+   Example: "What motivated you to apply for this role, and where do you see yourself in 5 years?"
 3) Position & Industry Knowledge (industry trends, company's position in the market)
+   Example: "What do you know about the current trends in this industry and how do you think this company fits into that landscape?"
 4) Technical Skills & Tool Knowledge (tools/technologies specific to the role and sector)
+   Example: "Which tools and technologies relevant to this position are you most comfortable with, and how have you used them?"
 5) Project Experience (managed projects, task distribution, deadlines)
-6) Problem Solving (challenges faced, approach, outcome)
+   Example: "Can you describe a project you worked on, how tasks were distributed, and how you handled deadlines?"
+6) Learning & Adaptability (how they keep up with new technologies, learning something new for a project, adapting to change)
+   Example: "How do you keep up with new technologies, and can you give an example of learning something new for a project?"
 7) Team & Organization (teamwork, reporting structure)
+   Example: "How do you typically collaborate with teammates, and how do you handle disagreements within a team?"
 
 CRITICAL RULES:
 - The candidate is APPLYING to the company, NOT working there.
 - 1st question MUST be category 1 (Introduction). Last MUST be category 7.
 - Each question must match its category number. Do NOT mix categories.
-- Questions must be in ENGLISH.
+- Questions must be in ENGLISH. Do NOT use any Turkish words.
 - Do NOT quote the CV directly. Ask naturally.
+- Do NOT copy the examples. Use them only as style and topic references.
+- If university or department name contains Turkish words, translate them to English.
 
 Output ONLY valid JSON. No other text."""
     else:
@@ -193,21 +203,28 @@ Company research context:
 
 Generate EXACTLY {n_questions} interview questions in ENGLISH, following this EXACT order:
 1) Introduction & Self-Presentation (education, past experiences, how they describe themselves)
+   Example: "Could you walk us through your background and tell us a little about yourself?"
 2) Motivation & Interest (why this position/company, what drives them, curiosity to learn)
+   Example: "What drew you to apply for this specific position, and what excites you most about this opportunity?"
 3) Career Goals (short and long-term goals, where they see themselves in this role)
+   Example: "Where do you see yourself in the next few years, and how does this role fit into your career path?"
 4) Strengths & Growth Areas (self-awareness, what they do to improve)
+   Example: "What would you say is your greatest strength, and is there an area you are actively working to improve?"
 5) Company & Industry Knowledge (how well they know the company, their perspective on the sector, depth of research)
+   Example: "How familiar are you with our company, and what do you find most interesting about this sector?"
 6) Communication & Team Fit (how they work with others, handling disagreements, receiving feedback)
-7) Closing (any questions from the candidate, final impression)
+   Example: "How do you handle disagreements with a colleague, and can you give an example of how you resolved one?"
 
 CRITICAL RULES:
 - This is a GENERAL/HR interview. Do NOT ask about technical tools, technologies, or technical skills.
 - Focus on: motivation, interest, cultural fit, communication, self-awareness.
 - The candidate is APPLYING to the company, NOT working there.
-- 1st question MUST be category 1 (Introduction). Last MUST be category 7.
+- 1st question MUST be category 1 (Introduction). Last MUST be category 6 (Communication & Team Fit).
 - Each question must match its category number. Do NOT mix categories.
-- Questions must be in ENGLISH.
+- Questions must be in ENGLISH. Do NOT use any Turkish words.
 - Do NOT quote the CV directly. Ask naturally.
+- Do NOT copy the examples. Use them only as style and topic references.
+- If university or department name contains Turkish words, translate them to English.
 
 Output ONLY valid JSON. No other text."""
 
@@ -215,7 +232,7 @@ Output ONLY valid JSON. No other text."""
         {"role": "system", "content": system_content},
         {"role": "user", "content": user_content},
     ]
-    model_name = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+    model_name = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 
     try:
         response = _ollama_chat(messages=messages, model=model_name)
@@ -264,7 +281,7 @@ def fallback_questions(domain: str, n: int) -> List[Dict]:
         "What do you see as the most important trends in this industry right now, and how does this role fit into that landscape?",
         "Which tools and technologies used in this position are you familiar with? Which ones have you used in your projects?",
         "Tell me about a project you managed or contributed to. How did you handle task distribution and meet deadlines?",
-        "What was the most difficult problem you encountered in your work, and how did you solve it?",
+        "How do you keep up with new technologies, and can you give an example of learning something new for a project?",
         "How do you ensure communication and coordination when working in a team? Can you give an example from your past team experiences?",
     ]
     en_general = [
@@ -274,7 +291,6 @@ def fallback_questions(domain: str, n: int) -> List[Dict]:
         "What would you say is your greatest strength? Is there an area you'd like to improve, and what are you doing about it?",
         "How well do you know our company and industry? How do you stay updated on developments in this sector?",
         "How do you ensure communication and collaboration when working in a team? How do you handle disagreements?",
-        "Is there anything you'd like to ask us, or anything else you'd like to add?",
     ]
 
     is_technical = (domain or "").lower() == "technical"
@@ -318,7 +334,7 @@ Provide only information, do not ask questions. Maximum 3-4 sentences."""
 
     try:
         response = _ollama_chat(
-            model=os.getenv("OLLAMA_MODEL", "llama3.1:8b"),
+            model=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
             messages=[
                 {"role": "system", "content": "You are a career research assistant. Provide brief, accurate information about the given company, sector and position. If you don't know the specific company, describe the sector in general."},
                 {"role": "user", "content": prompt},
@@ -331,33 +347,3 @@ Provide only information, do not ask questions. Maximum 3-4 sentences."""
     except Exception as e:
         logger.error(f"Company research error: {e}")
         return ""
-
-
-def chat_response(transcript: str, summary: str, strengths: str, improvements: str, user_message: str) -> str:
-    if not ollama:
-        return f"Based on your feedback: {summary or 'No analysis yet.'}"
-
-    try:
-        system_content = (
-            "You are an interview coach. Reply briefly and helpfully in ENGLISH. "
-            "Give constructive advice about the interview performance."
-        )
-        user_content = (
-            f"Feedback summary: {summary}\nStrengths: {strengths}\nAreas to improve: {improvements}\n\n"
-            f"Transcript: {transcript[:2000] if transcript else 'N/A'}\n\n"
-            f"User asks: {user_message}"
-        )
-        response = _ollama_chat(
-            model=os.getenv("OLLAMA_MODEL", "llama3.1:8b"),
-            messages=[
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": user_content},
-            ],
-        )
-        return response.get("message", {}).get("content", "") or "Could not generate response."
-    except Exception as e:
-        logger.error(f"Ollama chat error: {e}")
-        return (
-            f"Could not get AI response. Summary: {summary or 'No analysis yet.'} "
-            f"Improvements: {improvements or '—'}"
-        )

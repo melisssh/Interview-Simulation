@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Navigate } from 'react-router-dom'
 import Header from '../components/Header'
 
 import { API } from '../api'
@@ -44,10 +44,7 @@ export default function Account() {
   const token = localStorage.getItem('token')
   const email = localStorage.getItem('email') || ''
 
-  if (!token) {
-    navigate('/login')
-    return null
-  }
+  if (!token) return <Navigate to="/login" replace />
 
   async function handlePasswordChange(e) {
     e.preventDefault()

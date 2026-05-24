@@ -62,7 +62,7 @@ const styles = {
     gap: '0.4rem',
   },
   section: {
-    maxWidth: 960,
+    maxWidth: 1100,
     margin: '0 auto',
     padding: '4rem 1.5rem',
   },
@@ -76,11 +76,12 @@ const styles = {
   },
   steps: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-    gap: '2rem',
+    gridTemplateColumns: 'repeat(4, 1fr)',
+    gap: '1.25rem',
+    alignItems: 'stretch',
   },
   step: {
-    padding: '2rem',
+    padding: '1.25rem',
     background: '#f9fafb',
     borderRadius: 12,
     border: '1px solid #e5e7eb',
@@ -184,22 +185,22 @@ export default function Landing() {
       {/* Hero */}
       <section style={styles.hero}>
         <span style={styles.badge}>
-          ✨ AI-Powered Practice
+          🎥 AI-Powered Video Interview Simulation
         </span>
         <h1 style={styles.heroTitle}>
-          Ace Your Next Interview with Confidence
+          Practice Job Interviews with a Real-Time AI Interviewer
         </h1>
         <p style={styles.heroSubtitle}>
-          Practice real interview scenarios with AI. Get instant feedback, improve your answers, and land your dream job.
+          Practice video interviews with an AI interviewer — tailored to your target company and role.
         </p>
-        <Link to="/register" style={styles.ctaBtn}>
+        <Link to="/register" className="landing-btn">
           Start Practicing — It&apos;s Free
         </Link>
         <div style={styles.heroFeatures}>
           {[
-            ['🎙️', 'Voice-based AI interviews'],
-            ['📊', 'Real-time scoring'],
-            ['🏢', 'Industry-specific questions'],
+            ['🎥', 'Live video interviews'],
+            ['🏢', 'Company-specific questions'],
+            ['🔒', 'Runs locally — no cloud AI'],
           ].map(([icon, text], i) => (
             <span key={i} style={styles.heroFeature}>{icon} {text}</span>
           ))}
@@ -213,11 +214,12 @@ export default function Landing() {
         </h2>
         <div style={styles.steps}>
           {[
-            { num: '1', title: 'Create Account', desc: 'Sign up in seconds with your email. Set up your profile and upload your CV.' },
-            { num: '2', title: 'Start Interview', desc: 'Choose your industry, role, and language. Our AI adapts questions to your background.' },
-            { num: '3', title: 'Get Feedback', desc: 'Receive detailed scoring, strengths, and improvement suggestions after each session.' },
+            { num: '1', title: 'Register & Upload CV', desc: 'Create an account with your email, verify it, and upload your CV as PDF. Set up your university and department info.' },
+            { num: '2', title: 'Create an Interview', desc: 'Enter your target company, department, position, and sector. The AI researches the company and prepares a category structure before the interview starts.' },
+            { num: '3', title: 'Run the Live Interview', desc: 'Answer the AI\'s questions on camera. Each question is generated for you specifically.' },
+            { num: '4', title: 'Review Your Results', desc: 'Get scores, strengths, and improvement suggestions based on your session.' },
           ].map((step) => (
-            <div key={step.num} style={styles.step}>
+            <div key={step.num} className="step-card">
               <div style={styles.stepNum}>{step.num}</div>
               <h3 style={styles.stepTitle}>{step.title}</h3>
               <p style={styles.stepDesc}>{step.desc}</p>
@@ -230,18 +232,26 @@ export default function Landing() {
       <section style={{ ...styles.section, background: '#fafafa', maxWidth: '100%' }}>
         <div style={{ maxWidth: 960, margin: '0 auto' }}>
           <h2 style={styles.sectionTitle}>
-            Why Interview Sim?
+            Why This Platform?
           </h2>
-          <div style={styles.featuresGrid}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem', marginBottom: '1.5rem' }}>
             {[
-              { title: '🎯 Role-Specific', desc: 'Technical deep-dives or HR behavioral questions — tailored to your target role.' },
-              { title: '🌍 Multi-Language', desc: 'Practice in Turkish or English. Perfect for international job applications.' },
-              { title: '📄 CV-Aware', desc: 'AI reads your CV and asks about your real projects, skills, and experience.' },
-              { title: '📊 Smart Scoring', desc: 'Get scored on content, clarity, confidence, and language quality.' },
-              { title: '🏢 13 Industries', desc: 'From tech to finance, healthcare to law — questions match your sector.' },
-              { title: '🔒 Private', desc: 'Your data stays local. No cloud APIs — everything runs on your machine.' },
+              { title: '🤖 Questions Unique to You', desc: 'Every question is generated for you during the interview.' },
+              { title: '🎯 Technical or General', desc: 'Choose a technical interview (skills, projects) or a general HR interview (motivation, strengths, career).' },
+              { title: '🏢 Company-Specific', desc: 'Enter any company and role. The AI prepares context before the interview starts.' },
             ].map((f, i) => (
-              <div key={i} style={styles.featureCard}>
+              <div key={i} className="feature-card">
+                <h3 style={styles.featureTitle}>{f.title}</h3>
+                <p style={styles.featureDesc}>{f.desc}</p>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem', maxWidth: '66%', margin: '0 auto' }}>
+            {[
+              { title: '💬 Detailed Feedback', desc: 'Receive written feedback after the interview covering what went well and what to improve.' },
+              { title: '📊 Post-Interview Feedback', desc: 'Get scores on content, fluency, and delivery — plus written strengths and improvements.' },
+            ].map((f, i) => (
+              <div key={i} className="feature-card">
                 <h3 style={styles.featureTitle}>{f.title}</h3>
                 <p style={styles.featureDesc}>{f.desc}</p>
               </div>
@@ -256,16 +266,16 @@ export default function Landing() {
           Ready to Practice?
         </h2>
         <p style={styles.ctaSubtitle}>
-          Join now and experience your first AI-powered mock interview.
+          Create your first interview in under a minute. Pick any company, any role.
         </p>
-        <Link to="/register" style={styles.ctaBtn}>
+        <Link to="/register" className="landing-btn">
           Create Free Account
         </Link>
       </section>
 
       {/* Footer */}
       <footer style={styles.footer}>
-        <p>Built for students and professionals preparing for real interviews.</p>
+        <p>Built by Selin Kartal & Melis Halamoğlu — Yeditepe University Computer Engineering Senior Project 2026.</p>
         <div style={styles.footerLinks}>
           <Link to="/login" style={styles.footerLink}>
             Log In

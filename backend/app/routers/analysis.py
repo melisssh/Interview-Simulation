@@ -10,7 +10,7 @@ from typing import Any, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..analysis.scoring import pause_control_from_answer_text, score_transcript
+from ..analysis.scoring import pause_control_from_answer_text
 from ..analysis.speech_metrics import words_per_minute, wpm_clarity_score
 from ..analysis.video_features import analyze_interview_video, resolve_interview_video_path
 from .. import models
@@ -22,6 +22,149 @@ from ..analysis.ollama_feedback import generate_ollama_feedback
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def run_full_analysis(interview_id: int) -> None:
+    """
+    Complete analysis pipeline (content + speech + video + Ollama feedback).
+    Creates its own DB session — safe to call as a FastAPI BackgroundTask.
+    Sets interview.status to 'analyzed' on success or 'analysis_failed' on error.
+    """
+    from ..database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
+        if not interview:
+            return
+
+        all_metrics, n_answers = apply_content_metrics_to_interview_answers(db, interview)
+        db.commit()
+
+        if n_answers == 0:
+            interview.status = "analysis_failed"
+            db.commit()
+            return
+
+        answer_rows = (
+            db.query(models.InterviewAnswer)
+            .filter(models.InterviewAnswer.interview_id == interview_id)
+            .order_by(models.InterviewAnswer.question_order)
+            .all()
+        )
+
+        def _mean_int(getter):
+            vals = [getter(r) for r in answer_rows if getter(r) is not None]
+            return int(sum(vals) / len(vals)) if vals else None
+
+        content_scores   = [m.get("content_score",  50) for m in all_metrics if "content_score"  in m]
+        relevance_scores = [m.get("relevance_score", 50) for m in all_metrics if "relevance_score" in m]
+        overall_content  = int(sum(content_scores)  / len(content_scores))  if content_scores  else 50
+        overall_relevance = int(sum(relevance_scores) / len(relevance_scores)) if relevance_scores else 50
+
+        wpm_avg   = _mean_int(lambda r: r.speech_rate_wpm)
+        pause_avg = _mean_int(lambda r: r.pause_frequency_score)
+        wpm_clarity_vals = [
+            wpm_clarity_score(int(r.speech_rate_wpm))
+            for r in answer_rows if r.speech_rate_wpm is not None
+        ]
+        if wpm_clarity_vals and pause_avg is not None:
+            speech_quality = int((sum(wpm_clarity_vals) / len(wpm_clarity_vals) + pause_avg) / 2)
+        elif wpm_clarity_vals:
+            speech_quality = int(sum(wpm_clarity_vals) / len(wpm_clarity_vals))
+        elif pause_avg is not None:
+            speech_quality = pause_avg
+        else:
+            speech_quality = 65
+
+        eye_avg     = _mean_int(lambda r: r.eye_contact_score)
+        posture_avg = _mean_int(lambda r: r.posture_score)
+        head_avg    = _mean_int(lambda r: r.head_stability_score)
+        nv_parts    = [x for x in [eye_avg, posture_avg, head_avg] if x is not None]
+        nonverbal_aggregate = int(sum(nv_parts) / len(nv_parts)) if nv_parts else None
+
+        avg_words = _mean_int(lambda r: r.answer_length_words) or 0
+        tech_avg  = _mean_int(lambda r: r.technical_accuracy_score)
+        star_avg  = _mean_int(lambda r: r.star_structure_score)
+
+        aggregated_metrics = {
+            "domain": interview.domain,
+            "content_score": overall_content,
+            "relevance_score": overall_relevance,
+            "answer_count": n_answers,
+            "answer_length_words": avg_words,
+            "star_structure_score": star_avg,
+            "technical_accuracy_score": tech_avg,
+            "speech_quality_score": speech_quality,
+            "speech_rate_wpm": wpm_avg if wpm_avg is not None else 120,
+            "pause_frequency_score": pause_avg if pause_avg is not None else 70,
+            "eye_contact_score": eye_avg,
+            "posture_score": posture_avg,
+            "head_stability_score": head_avg,
+            "nonverbal_aggregate": nonverbal_aggregate,
+        }
+
+        feedback_gen    = get_feedback_generator()
+        feedback_report = feedback_gen.generate_full_report(
+            interview_data={"domain": interview.domain, "language": interview.language},
+            metrics=aggregated_metrics,
+        )
+
+        qa_pairs    = [{"question": r.question_text or "", "answer": r.answer_text or ""} for r in answer_rows]
+        ollama_text = generate_ollama_feedback(
+            questions_answers=qa_pairs,
+            metrics=aggregated_metrics,
+            domain=interview.domain or "general",
+            language=interview.language or "tr",
+        )
+
+        feedback = (
+            db.query(models.Feedback)
+            .filter(models.Feedback.interview_id == interview_id)
+            .order_by(models.Feedback.created_at.desc(), models.Feedback.id.desc())
+            .first()
+        )
+        if not feedback:
+            feedback = models.Feedback(interview_id=interview_id)
+            db.add(feedback)
+
+        def _fit_label(score):
+            if score is None: return "Adequate"
+            if score >= 80:   return "Excellent"
+            if score >= 65:   return "Good"
+            if score >= 50:   return "Adequate"
+            return "Needs Improvement"
+
+        feedback.overall_score              = feedback_report["overall_score"]
+        feedback.content_quality_score      = feedback_report["content_score"]
+        feedback.speech_quality_score       = feedback_report["speech_score"]
+        feedback.nonverbal_score            = feedback_report["nonverbal_score"]
+        feedback.metrics_json               = json.dumps(aggregated_metrics)
+        feedback.summary                    = "Interview analysis complete"
+        feedback.strengths                  = "\n".join(feedback_report["strengths"])
+        feedback.improvements               = "\n".join(feedback_report["improvements"])
+        feedback.actionable_recommendations = ollama_text or feedback_report["content_feedback"]
+        feedback.technical_fit              = "Sufficient" if overall_content >= 75 else "Partial" if overall_content >= 60 else "Insufficient"
+        feedback.communication_fit          = _fit_label(speech_quality)
+        feedback.motivation_level           = _fit_label(overall_content)
+        feedback.overall_recommendation     = feedback_report["recommendation"]
+        interview.status                    = "analyzed"
+        db.commit()
+        logger.info("Background analysis complete for interview_id=%s", interview_id)
+
+    except Exception as exc:
+        logger.error("Background analysis failed for interview_id=%s: %s", interview_id, exc, exc_info=True)
+        try:
+            db.rollback()
+            interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
+            if interview:
+                interview.status = "analysis_failed"
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
 
 
 def _backfill_speech_from_transcript(db: Session, interview: models.Interview, answers: List[Any]) -> None:
@@ -172,7 +315,7 @@ def get_interview_analysis(
     current_user: models.User = Depends(get_current_user),
 ):
     """Get complete analysis for an interview"""
-    print(f"\n📊 GET /analysis endpoint: interview_id={interview_id}\n")
+    logger.info("GET /analysis endpoint: interview_id=%s", interview_id)
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
         raise HTTPException(status_code=404, detail="Interview not found")
@@ -215,7 +358,7 @@ async def analyze_interview(
     current_user: models.User = Depends(get_current_user),
 ):
     """Analyze interview: calculate metrics and generate feedback"""
-    print(f"\n📊📊📊 ANALYZE ENDPOINT STARTED: interview_id={interview_id} 📊📊📊\n")
+    logger.info("ANALYZE endpoint started: interview_id=%s", interview_id)
 
     try:
         interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
@@ -223,14 +366,13 @@ async def analyze_interview(
             raise HTTPException(status_code=404, detail="Interview not found")
         if interview.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="You do not have access to this interview")
-        interview.status = "analyzing"
-        db.commit()
-
         all_metrics, n_answers = apply_content_metrics_to_interview_answers(db, interview)
-        db.commit()
 
         if n_answers == 0:
             raise HTTPException(status_code=400, detail="No answer data found")
+
+        interview.status = "analyzing"
+        db.commit()
 
         answer_rows = (
             db.query(models.InterviewAnswer)
@@ -345,9 +487,7 @@ async def analyze_interview(
         db.commit()
         db.refresh(feedback)
 
-        print(f"\n✅✅✅ ANALIZ TAMAMLANDI ✅✅✅")
-        print(f"📊 Score: {feedback.overall_score}")
-        print(f"📊 Recommendation: {feedback.overall_recommendation}\n")
+        logger.info("Analysis complete: interview_id=%s score=%s recommendation=%s", interview_id, feedback.overall_score, feedback.overall_recommendation)
 
         return {
             "status": "success",
@@ -359,10 +499,7 @@ async def analyze_interview(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"\n❌❌❌ ANALIZ HATASI: {e}\n")
-        import traceback
-        print(traceback.format_exc())
-        logger.error(f"Analysis error for interview {interview_id}: {e}", exc_info=True)
+        logger.error("Analysis error for interview %s: %s", interview_id, e, exc_info=True)
         try:
             interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
             if interview:
@@ -370,4 +507,5 @@ async def analyze_interview(
                 db.commit()
         except Exception:
             db.rollback()
-        raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
+        logger.error("Analysis error for interview %s: %s", interview_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Analysis failed. Please try again later.")

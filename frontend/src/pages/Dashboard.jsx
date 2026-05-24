@@ -13,7 +13,6 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const token = localStorage.getItem('token')
   const email = localStorage.getItem('email') || ''
-  const isAdmin = localStorage.getItem('is_admin') === '1'
 
   const fetchInterviews = () => {
     return fetch(`${API}/interviews`, { headers: { Authorization: `Bearer ${token}` } })
@@ -145,7 +144,7 @@ export default function Dashboard() {
                 : ''
 
               const ctaLink = isReady ? `/interview/${i.id}`
-                : isAnalyzed || isAnalysisFailed ? `/interview/${i.id}/sonuc`
+                : isAnalyzed || isAnalysisFailed ? `/interview/${i.id}/result`
                 : isPrepFailed ? `/interview/${i.id}`
                 : '#'
 

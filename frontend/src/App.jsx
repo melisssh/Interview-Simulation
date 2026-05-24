@@ -31,7 +31,7 @@ export default function App() {
         <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
         <Route path="/account" element={<ProtectedRoute><Account /></ProtectedRoute>} />
         <Route path="/interview/:id" element={<ProtectedRoute><InterviewRun /></ProtectedRoute>} />
-        <Route path="/interview/:id/sonuc" element={<ProtectedRoute><InterviewResult /></ProtectedRoute>} />
+        <Route path="/interview/:id/result" element={<ProtectedRoute><InterviewResult /></ProtectedRoute>} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </ErrorBoundary>
