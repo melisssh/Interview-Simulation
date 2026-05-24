@@ -3,6 +3,7 @@ Interview Analysis API Endpoints
 Handles metrics calculation, content analysis, and feedback generation
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, List, Optional, Tuple
@@ -10,7 +11,7 @@ from typing import Any, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..analysis.scoring import pause_control_from_answer_text, score_transcript
+from ..analysis.scoring import pause_control_from_answer_text
 from ..analysis.speech_metrics import words_per_minute, wpm_clarity_score
 from ..analysis.video_features import analyze_interview_video, resolve_interview_video_path
 from .. import models
@@ -131,12 +132,21 @@ def run_full_analysis(interview_id: int) -> None:
             feedback = models.Feedback(interview_id=interview_id)
             db.add(feedback)
 
-        def _fit_label(score):
-            if score is None: return "Adequate"
-            if score >= 80:   return "Excellent"
+        def _communication_label(score: Optional[int]) -> str:
+            """Speech-based communication skill label."""
+            if score is None: return "Average"
+            if score >= 80:   return "Strong"
             if score >= 65:   return "Good"
-            if score >= 50:   return "Adequate"
-            return "Needs Improvement"
+            if score >= 50:   return "Average"
+            return "Weak"
+
+        def _motivation_label(score: Optional[int]) -> str:
+            """Content-based motivation / engagement label."""
+            if score is None: return "Average"
+            if score >= 80:   return "High"
+            if score >= 65:   return "Moderate"
+            if score >= 50:   return "Average"
+            return "Low"
 
         feedback.overall_score               = feedback_report["overall_score"]
         feedback.content_quality_score       = feedback_report["content_score"]
@@ -148,8 +158,8 @@ def run_full_analysis(interview_id: int) -> None:
         feedback.improvements                = "\n".join(feedback_report["improvements"])
         feedback.actionable_recommendations  = ollama_text or feedback_report["content_feedback"]
         feedback.technical_fit               = "Sufficient" if overall_content >= 75 else "Partial" if overall_content >= 60 else "Insufficient"
-        feedback.communication_fit           = _fit_label(speech_quality)
-        feedback.motivation_level            = _fit_label(overall_content)
+        feedback.communication_fit           = _communication_label(speech_quality)
+        feedback.motivation_level            = _motivation_label(overall_content)
         feedback.overall_recommendation      = feedback_report["recommendation"]
         interview.status                     = "analyzed"
         db.commit()
@@ -170,16 +180,22 @@ def run_full_analysis(interview_id: int) -> None:
 
 
 def _backfill_speech_from_transcript(db: Session, interview: models.Interview, answers: List[Any]) -> None:
-    """Fill missing speech_rate_wpm and pause_frequency_score from interview transcript."""
+    """Fill missing speech_rate_wpm and pause_frequency_score from interview transcript.
+
+    WPM note: the transcript only provides total word count + total duration,
+    so per-answer timing is unavailable. We estimate each missing answer's WPM
+    from its own word count and its proportional share of the total duration —
+    which is mathematically equivalent to the overall rate but derives from
+    per-answer data and stays None when the answer has no text.
+    """
     if not answers:
         return
-    lang = interview.language or "tr"
 
     # Pause score: keep real PCM-based value from WebSocket if present;
-    # fall back to text-based filler-word proxy only when missing.
+    # fall back to text-based Turkish filler-word proxy only when missing.
     for ar in answers:
         if ar.pause_frequency_score is None:
-            ar.pause_frequency_score = pause_control_from_answer_text(ar.answer_text or "", lang)
+            ar.pause_frequency_score = pause_control_from_answer_text(ar.answer_text or "")
 
     # speech_rate_wpm backfill requires a transcript with valid duration
     tr = (
@@ -190,14 +206,24 @@ def _backfill_speech_from_transcript(db: Session, interview: models.Interview, a
     )
     if not tr or not tr.duration_seconds or tr.duration_seconds <= 0:
         return
+
+    total_duration = float(tr.duration_seconds)
     full_text = (tr.text or "").strip()
     total_words = len(full_text.split())
     if total_words <= 0:
         return
-    overall_wpm = words_per_minute(total_words, float(tr.duration_seconds))
+
+    # Assign per-answer WPM only to answers that lack real PCM-based timing.
+    # Use the answer's own word count to estimate its proportional duration.
     for ar in answers:
-        if ar.speech_rate_wpm is None and overall_wpm is not None:
-            ar.speech_rate_wpm = overall_wpm
+        if ar.speech_rate_wpm is not None:
+            continue  # already set from PCM — don't overwrite
+        answer_words = len((ar.answer_text or "").split())
+        if answer_words <= 0:
+            continue  # empty answer — leave as None
+        # Proportional duration estimate: answer_words / total_words * total_duration
+        est_duration = (answer_words / total_words) * total_duration
+        ar.speech_rate_wpm = words_per_minute(answer_words, est_duration)
 
 
 _VIDEO_NONVERBAL_KEYS = (
@@ -371,9 +397,11 @@ async def analyze_interview(
     if interview.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="You do not have access to this interview")
 
-    # run_full_analysis creates its own session and handles all error cases
+    # run_full_analysis is CPU/IO-heavy (Whisper + MediaPipe + SentenceTransformer + Ollama).
+    # Run it in a thread-pool executor so the async event loop stays free for other requests.
     try:
-        run_full_analysis(interview_id)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, run_full_analysis, interview_id)
     except Exception as e:
         logger.error("analyze endpoint error for interview %s: %s", interview_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
