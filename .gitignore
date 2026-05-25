@@ -49,3 +49,6 @@ frontend/dist/
 .vscode/
 *.swp
 *.swo
+
+# Claude Code (geçici çalışma dosyaları)
+.claude/

@@ -234,9 +234,9 @@ export default function Profile() {
                 <option value="4">4th Year</option>
                 <option value="5">5th Year</option>
                 <option value="6">6th Year</option>
-                <option value="Mezun">Graduate</option>
+                <option value="Graduate">Graduate</option>
                 <option value="Master's Degree">Master&apos;s</option>
-                <option value="Doktora">PhD</option>
+                <option value="PhD">PhD</option>
               </select>
             </div>
             <div style={field}>

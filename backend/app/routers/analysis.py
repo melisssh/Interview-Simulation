@@ -6,6 +6,7 @@ Handles metrics calculation, content analysis, and feedback generation
 import asyncio
 import json
 import logging
+import time
 from typing import Any, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -34,6 +35,7 @@ def run_full_analysis(interview_id: int) -> None:
     from ..database import SessionLocal
 
     db = SessionLocal()
+    _analysis_start = time.time()
     try:
         interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
         if not interview:
@@ -162,7 +164,9 @@ def run_full_analysis(interview_id: int) -> None:
         feedback.overall_recommendation      = feedback_report["recommendation"]
         interview.status                     = "analyzed"
         db.commit()
+        _analysis_elapsed = time.time() - _analysis_start
         logger.info("Background analysis complete for interview_id=%s", interview_id)
+        print(f"[PERF] Rapor üretim süresi (analiz): {_analysis_elapsed:.2f}sn", flush=True)
 
     except Exception as exc:
         logger.error("Background analysis failed for interview_id=%s: %s", interview_id, exc, exc_info=True)

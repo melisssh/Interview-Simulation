@@ -3,7 +3,9 @@ import json
 import base64
 import logging
 import tempfile
+import time
 import wave
+import psutil
 from typing import List, Dict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -27,6 +29,10 @@ try:
     import ollama
 except ImportError:
     ollama = None
+
+
+def _looks_wrong_language(text: str, language: str) -> bool:
+    return False
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +87,12 @@ def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "en") -> di
             wf.setframerate(48000)
             wf.writeframes(audio_bytes)
         model = _get_ws_whisper_model()
+        _stt_start = time.time()
         segments, _ = model.transcribe(tmp_path, language=language)
         segs = list(segments)
         text = "".join(seg.text for seg in segs).strip()
+        _stt_elapsed = time.time() - _stt_start
+        print(f"[PERF] Ses→Yazı (STT) süresi: {_stt_elapsed:.2f}sn | kelime: {len(text.split())}", flush=True)
         dur = pcm_duration_seconds(len(audio_bytes))
         wc = len(text.split())
         wpm = words_per_minute(wc, dur)
@@ -239,11 +248,14 @@ RULES:
                 messages.append(h)
             messages.append({"role": "user", "content": prompt})
 
+            _ollama_start = time.time()
             response = _ollama_chat(
                 model=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
                 messages=messages,
             )
             out = (response.get("message", {}).get("content", "") or "").strip()
+            _ollama_elapsed = time.time() - _ollama_start
+            print(f"[PERF] Soru üretim süresi (Ollama): {_ollama_elapsed:.2f}sn", flush=True)
             return " ".join(out.split())
         except Exception as e:
             logger.error(f"Ollama LLM error: {e}")
@@ -335,6 +347,7 @@ RULES:
 
     def handle_answer(self, transcript: str) -> tuple[str, bool]:
         """Phase 2: Process answer, generate next question. Returns (response, is_ended)."""
+        _handle_start = time.time()
         self.answer_count += 1
         self.history.append({"role": "user", "content": transcript})
 
@@ -389,6 +402,11 @@ RULES:
         q = self._generate_question_for_category(next_category)
         self.last_question_text = q
         self.history.append({"role": "assistant", "content": q})
+        _handle_elapsed = time.time() - _handle_start
+        _cpu = psutil.cpu_percent()
+        _ram = psutil.virtual_memory().used / (1024 * 1024)
+        print(f"[PERF] Cevap→Yeni Soru toplam gecikme: {_handle_elapsed:.2f}sn", flush=True)
+        print(f"[PERF] Sistem kaynakları: CPU %{_cpu:.1f} | RAM {_ram:.0f}MB", flush=True)
         return q, False
 
 

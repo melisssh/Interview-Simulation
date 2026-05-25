@@ -178,7 +178,7 @@ npm run dev
 # Available at http://localhost:5173
 ```
 
-Open `http://localhost:5173` in your browser → Register → Upload CV → Create interview → Run
+Open `http://localhost:5173` in your browser → Register → Complete profile → Create interview → Run
 
 ---
 
@@ -188,7 +188,7 @@ Open `http://localhost:5173` in your browser → Register → Upload CV → Crea
 |-----------|---------|-------------|
 | CPU | 4 cores | 8+ cores |
 | RAM | 8 GB | 16 GB |
-| Disk | 5 GB free | 10 GB free |
+| Disk | 8 GB free | 15 GB free |
 | GPU (optional) | — | 4 GB VRAM (CUDA or Apple Metal) |
 
 > **Note:** The system runs fully on CPU. GPU acceleration speeds up both Ollama inference and faster-whisper transcription significantly, but is not required.
