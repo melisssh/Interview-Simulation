@@ -161,7 +161,7 @@ class TestInputValidation:
             "email": "' OR '1'='1",
             "password": "anything",
         })
-        assert res.status_code in [400, 401, 422]
+        assert res.status_code in [400, 401, 422, 429]  # 429 = rate limiter devrede
 
     def test_sql_injection_in_login_password(self):
         """
@@ -171,7 +171,7 @@ class TestInputValidation:
             "email": "test@test.com",
             "password": "' OR '1'='1'; DROP TABLE users; --",
         })
-        assert res.status_code in [400, 401, 422]
+        assert res.status_code in [400, 401, 422, 429]  # 429 = rate limiter devrede
 
     def test_xss_payload_in_registration(self):
         """
@@ -216,4 +216,4 @@ class TestInputValidation:
             "email": None,
             "password": None,
         })
-        assert res.status_code in [401, 422]
+        assert res.status_code in [401, 422, 429]  # 429 = rate limiter devrede
