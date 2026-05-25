@@ -24,7 +24,7 @@ def _build_text_feedback(
     total_words: int, filler_ratio: float, overall_score: int
 ) -> tuple[str, str, str]:
     if overall_score >= 80:
-        summary = "Overall you provided a strong and fluent answer."
+        summary = "Your answer was clear and well-structured."
     elif overall_score >= 50:
         summary = "Your answer is generally sufficient but there is room for improvement."
     else:

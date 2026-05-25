@@ -286,7 +286,7 @@ RULES:
         )
 
         q = self._ask_ollama(prompt)
-        if not q or _looks_wrong_language(q, self.language):
+        if not q:
             # fallback to category description itself as a plain question
             fallbacks = {
                 "intro":     "Could you walk us through your background and what led you to apply for this position?",
@@ -367,7 +367,7 @@ RULES:
             )
             logger.info(f"🔹 Follow-up triggered: q_index={current_q_index} category={current_category}")
             q = self._ask_ollama(prompt)
-            if not q or _looks_wrong_language(q, self.language):
+            if not q:
                 q = "Could you elaborate on that a bit more?"
             self.history.append({"role": "assistant", "content": q})
             return q, False
@@ -596,10 +596,8 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                     db = SessionLocal()
                     try:
                         print(f"🟢 Saving answer\n")
-                        # Fix #1 & #3: use question_count (which prepared question is being answered)
-                        # rather than answer_count+1 (which overcounts due to follow-ups)
                         current_q_num = session.question_count
-                        question_text = interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
+                        question_text = session.last_question_text or interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
 
                         answer_record = models.InterviewAnswer(
                             interview_id=interview_id,
@@ -657,9 +655,8 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
 
                     db = SessionLocal()
                     try:
-                        # Fix #1 & #3: use question_count (consistent with audio handler)
                         current_q_num = session.question_count
-                        question_text = interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
+                        question_text = session.last_question_text or interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
                         answer_record = models.InterviewAnswer(
                             interview_id=interview_id,
                             question_order=current_q_num,

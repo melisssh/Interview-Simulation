@@ -1,12 +1,17 @@
 import os
 import re
+import sys
 import base64
 import subprocess
 import tempfile
-import httpx
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from . import auth
+
+try:
+    import httpx
+except ImportError:
+    httpx = None
 
 router = APIRouter()
 
@@ -51,6 +56,10 @@ async def tts(request: Request, _current_user=Depends(auth.get_current_user)):
 
     else:
         # --- macOS say (ücretsiz, quota yok) ---
+        if sys.platform != "darwin":
+            # Not macOS — return empty audio so frontend falls back to browser TTS
+            return JSONResponse(content={"audioContent": "", "timepoints": []})
+
         inp = body.get("input", {})
         text = _ssml_to_text(inp.get("ssml", "")) or inp.get("text", "")
         if not text:

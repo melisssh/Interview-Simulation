@@ -3,6 +3,17 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { API } from '../api'
 
 /* ─── utils ─── */
+const CATEGORY_NAMES = new Set(['intro','motivation','career','strengths','company','team_hr','industry','skills','project','learning','team'])
+const parseQuestionText = (raw) => {
+  if (!raw) return null
+  const s = raw.trim()
+  if (s.startsWith('{')) {
+    try { const p = JSON.parse(s); return p.text || null } catch { /* fall through */ }
+  }
+  if (CATEGORY_NAMES.has(s.toLowerCase())) return null
+  return s
+}
+
 const toNum     = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null }
 const pickScore = (...vals) => { for (const v of vals) { const n = toNum(v); if (n !== null) return n } return null }
 const parseMx   = (raw) => {
@@ -81,7 +92,7 @@ const ScoreRow = ({ label, score, note, last }) => {
 /* ─── OllamaBlock ─── */
 const SECTION_ICONS = { 'Answer Analysis': '📋', 'Communication Style': '🎤', 'Recommendations': '💡' }
 
-const OllamaBlock = ({ text }) => {
+const OllamaBlock = ({ text, answers = [] }) => {
   if (!text) return null
 
   const regex = /\*\*([^*]+)\*\*/g
@@ -124,15 +135,24 @@ const OllamaBlock = ({ text }) => {
                 ))}
               </ul>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 {lines.map((l, j) => {
-                  const qMatch = l.match(/^(Question\s*\d+)\s*[:：]\s*(.+)/i)
-                  if (qMatch) return (
-                    <div key={j} style={{ display: 'flex', gap: '0.6rem', alignItems: 'flex-start' }}>
-                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#9ca3af', whiteSpace: 'nowrap', paddingTop: '0.18rem', minWidth: 60 }}>{qMatch[1]}</span>
-                      <span style={{ fontSize: '0.875rem', color: '#4b5563', lineHeight: 1.65 }}>{qMatch[2]}</span>
-                    </div>
-                  )
+                  const qMatch = l.match(/^Question\s*(\d+)\s*[:：]\s*(.+)/i)
+                  if (qMatch) {
+                    const qNum = parseInt(qMatch[1], 10)
+                    const questionText = parseQuestionText(answers.find(a => a.question_order === qNum)?.question_text)
+                    return (
+                      <div key={j} style={{ borderLeft: '3px solid #e5e7eb', paddingLeft: '0.85rem' }}>
+                        {questionText && (
+                          <p style={{ margin: '0 0 0.3rem 0', fontSize: '0.78rem', fontWeight: 600, color: '#6b7280', lineHeight: 1.4, display: 'flex', gap: '0.35rem', alignItems: 'flex-start' }}>
+                            <span style={{ background: '#f3f4f6', color: '#9ca3af', borderRadius: 4, padding: '0 0.35rem', fontSize: '0.72rem', fontWeight: 700, flexShrink: 0, marginTop: '0.05rem' }}>Q</span>
+                            {questionText}
+                          </p>
+                        )}
+                        <span style={{ fontSize: '0.875rem', color: '#4b5563', lineHeight: 1.65 }}>{qMatch[2]}</span>
+                      </div>
+                    )
+                  }
                   return <p key={j} style={{ margin: 0, fontSize: '0.875rem', color: '#4b5563', lineHeight: 1.65 }}>{l}</p>
                 })}
               </div>
@@ -284,11 +304,6 @@ export default function InterviewResult() {
               {interview.company_name ? ` · ${interview.company_name}` : ''}
             </p>
           </div>
-          {(interview.status === 'completed' || interview.status === 'analyzed' || interview.status === 'analysis_failed') && (
-            <button onClick={startAnalysis} disabled={isRunning} style={btnStyle(isRunning ? '#9ca3af' : '#374151', isRunning)}>
-              {isRunning ? 'Running analysis…' : 'Re-run analysis'}
-            </button>
-          )}
         </div>
 
         {/* No analysis */}
@@ -388,7 +403,7 @@ export default function InterviewResult() {
                   <p style={{ ...sectionLabel, marginBottom: 0 }}>DETAILED FEEDBACK</p>
                   <span style={{ fontSize: '0.7rem', color: '#9ca3af', background: '#f9fafb', border: '1px solid #e5e7eb', padding: '0.1rem 0.5rem', borderRadius: 99 }}>AI</span>
                 </div>
-                <OllamaBlock text={aiText} />
+                <OllamaBlock text={aiText} answers={interview?.answers || []} />
               </div>
             )}
           </>

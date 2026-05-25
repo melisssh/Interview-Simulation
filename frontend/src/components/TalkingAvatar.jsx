@@ -194,6 +194,7 @@ const TalkingAvatar = forwardRef(function TalkingAvatar({ style }, ref) {
   const safetyTimerRef = useRef(null)
   const [status, setStatus] = useState('loading')
   const [speaking, setSpeaking] = useState(false)
+  const ttsAvailableRef = useRef(null) // null=unknown, true=has audio, false=empty
 
   useEffect(() => {
     let cancelled = false
@@ -247,10 +248,26 @@ const TalkingAvatar = forwardRef(function TalkingAvatar({ style }, ref) {
     }
   }, [])
 
+  const _speakWithBrowserTTS = (text, onEnd) => {
+    setSpeaking(true)
+    window.speechSynthesis.cancel()
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = 'en-US'
+    u.rate = 0.92
+    u.onend = () => { setSpeaking(false); onEnd?.() }
+    u.onerror = () => { setSpeaking(false); onEnd?.() }
+    window.speechSynthesis.speak(u)
+  }
+
   useImperativeHandle(ref, () => ({
     speak(text, onEnd) {
       if (headRef.current && status === 'ready') {
-        // Safety: if TalkingHead promise never resolves, unblock mic after estimated duration
+        // If TTS endpoint has no audio (Windows), use Web Speech API directly
+        if (ttsAvailableRef.current === false) {
+          _speakWithBrowserTTS(text, onEnd)
+          return
+        }
+
         const safetyMs = Math.max(6000, text.length * 70)
         let done = false
         safetyTimerRef.current = setTimeout(() => {
@@ -259,19 +276,41 @@ const TalkingAvatar = forwardRef(function TalkingAvatar({ style }, ref) {
         const finish = () => {
           if (!done) { done = true; clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; setSpeaking(false); onEnd?.() }
         }
+
+        // First time: probe TTS to see if audio is available
+        if (ttsAvailableRef.current === null) {
+          const token = localStorage.getItem('token') || ''
+          fetch(TTS_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+            body: JSON.stringify({ input: { text: 'hi' }, voice: { languageCode: 'en-US', name: TTS_VOICE }, audioConfig: { audioEncoding: 'MP3' } }),
+          })
+            .then(r => r.json())
+            .then(data => {
+              ttsAvailableRef.current = !!(data.audioContent && data.audioContent.length > 10)
+              if (!ttsAvailableRef.current) {
+                // TTS has no audio — switch to Web Speech API
+                clearTimeout(safetyTimerRef.current)
+                _speakWithBrowserTTS(text, onEnd)
+              } else {
+                headRef.current.speakText(text, { ttsLang: 'en-US', ttsRate: 0.92 })
+                  .then(finish).catch(finish)
+              }
+            })
+            .catch(() => {
+              ttsAvailableRef.current = false
+              clearTimeout(safetyTimerRef.current)
+              _speakWithBrowserTTS(text, onEnd)
+            })
+          return
+        }
+
         headRef.current.speakText(text, { ttsLang: 'en-US', ttsRate: 0.92 })
           .then(finish).catch(finish)
         return
       }
       // Fallback: plain Web Speech API
-      setSpeaking(true)
-      window.speechSynthesis.cancel()
-      const u = new SpeechSynthesisUtterance(text)
-      u.lang = 'en-US'
-      u.rate = 0.92
-      u.onend = () => { setSpeaking(false); onEnd?.() }
-      u.onerror = () => { setSpeaking(false); onEnd?.() }
-      window.speechSynthesis.speak(u)
+      _speakWithBrowserTTS(text, onEnd)
     },
     stop() {
       if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null }

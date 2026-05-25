@@ -46,7 +46,7 @@ class FeedbackGenerator:
         tech_score = metrics.get("technical_accuracy_score")
         if tech_score is not None and metrics.get("domain") == "technical":
             if tech_score >= 90:
-                feedback.append("✅ Excellent technical knowledge demonstrated.")
+                feedback.append("✅ Technical knowledge was accurate and on point.")
             elif tech_score >= 75:
                 feedback.append("✅ Good technical knowledge. Some details are worth reviewing further.")
             elif tech_score >= 60:
@@ -95,7 +95,7 @@ class FeedbackGenerator:
 
         head_stability = metrics.get("head_stability_score", 0)
         if head_stability >= 80:
-            feedback.append("✅ Head movement was stable and controlled — professional appearance.")
+            feedback.append("✅ Head movement was stable and controlled.")
         elif head_stability >= 60:
             feedback.append("⚠️ Head moved around a bit. Try to stay still and composed.")
         else:
@@ -103,7 +103,7 @@ class FeedbackGenerator:
 
         posture = metrics.get("posture_score", 0)
         if posture >= 75:
-            feedback.append("✅ Good posture — upright and professional.")
+            feedback.append("✅ Good posture — you sat upright throughout.")
         elif posture >= 60:
             feedback.append("⚠️ Slightly slouched. Sit up straight for a more confident look.")
         else:
@@ -132,20 +132,20 @@ class FeedbackGenerator:
         # Technical accuracy (technical domain)
         tech = metrics.get("technical_accuracy_score")
         if domain == "technical" and tech is not None and tech >= 85:
-            strengths.append("Strong technical knowledge demonstrated")
+            strengths.append("Technical knowledge was accurate and on point")
 
         # Speech
         wpm = metrics.get("speech_rate_wpm", 0)
         if wpm and 120 <= wpm <= 150:
-            strengths.append("Speaking pace was professional and clear")
+            strengths.append("Speaking pace was clear and easy to follow")
         if metrics.get("pause_frequency_score", 0) >= 80:
             strengths.append("Speech flowed naturally with minimal hesitations")
 
         # Nonverbal
         if metrics.get("eye_contact_score") and metrics["eye_contact_score"] >= 75:
-            strengths.append("Strong eye contact — confident and engaging presence")
+            strengths.append("Maintained consistent eye contact with the camera")
         if metrics.get("posture_score") and metrics["posture_score"] >= 75:
-            strengths.append("Professional posture throughout the interview")
+            strengths.append("Maintained upright posture throughout the interview")
 
         return strengths if strengths else ["Showed genuine effort throughout the interview"]
 

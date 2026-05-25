@@ -413,10 +413,24 @@ def get_interview(
     answers = db.query(models.InterviewAnswer).filter(
         models.InterviewAnswer.interview_id == interview_id
     ).order_by(models.InterviewAnswer.question_order).all()
+    def _parse_question_text(raw: str | None) -> str | None:
+        """Parse question_text — may be stored as JSON {"text": "..."} from older sessions."""
+        if not raw:
+            return raw
+        raw = raw.strip()
+        if raw.startswith("{"):
+            try:
+                import json as _json
+                parsed = _json.loads(raw)
+                return parsed.get("text", raw)
+            except Exception:
+                pass
+        return raw
+
     answers_data = [
         {
             "question_order": a.question_order,
-            "question_text": a.question_text,
+            "question_text": _parse_question_text(a.question_text),
             "answer_text": a.answer_text,
         }
         for a in answers
