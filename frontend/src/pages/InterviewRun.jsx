@@ -99,7 +99,7 @@ export default function InterviewRun() {
     sentThinking: 'Sent, processing...',
     wsError: 'Connection error',
     wsConnError: 'Could not connect to AI',
-    recording: '● Recording...',
+    recording: 'Recording...',
     uploading: 'Video uploading, please do not close the page...',
     ready: 'INTERVIEW READY',
     permissionDesc: 'We will ask for camera and microphone permission. Questions will appear on screen one by one while recording. You can start the interview when ready.',

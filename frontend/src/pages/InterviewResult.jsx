@@ -285,11 +285,11 @@ export default function InterviewResult() {
   if (!interview) return <Shell><div style={{ padding: '4rem', textAlign: 'center', color: '#dc2626', fontSize: '0.9rem' }}>Interview not found</div></Shell>
 
   return (
-    <div style={{ minHeight: '100vh', background: '#fff', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ minHeight: '100vh', background: '#fff' }}>
 
       {/* Header */}
       <header style={{ borderBottom: '1px solid #e5e7eb', padding: '0 1.75rem', height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Link to="/dashboard" style={{ fontWeight: 700, color: '#111', textDecoration: 'none', fontSize: '1rem' }}>Interview Simulation</Link>
+        <Link to="/dashboard" style={{ fontWeight: 700, color: '#111', textDecoration: 'none', fontSize: '1.25rem' }}>Interview Simulation</Link>
         <Link to="/dashboard" style={{ fontSize: '0.85rem', color: '#6b7280', textDecoration: 'none' }}>← Back to Dashboard</Link>
       </header>
 
