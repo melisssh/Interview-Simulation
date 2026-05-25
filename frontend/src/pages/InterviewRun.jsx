@@ -388,6 +388,12 @@ export default function InterviewRun() {
     }
   }, [recording])
 
+  useEffect(() => {
+    if (interview?.status === 'analyzing' || interview?.status === 'analyzed' || interview?.status === 'analysis_failed') {
+      navigate(`/interview/${id}/result`)
+    }
+  }, [interview?.status, id, navigate])
+
   async function handleStart() {
     setError('')
     try {
@@ -464,12 +470,6 @@ export default function InterviewRun() {
   const isAnalyzing = interview.status === 'analyzing'
   const isAnalyzed = interview.status === 'analyzed'
   const isAnalysisFailed = interview.status === 'analysis_failed'
-
-  useEffect(() => {
-    if (interview?.status === 'analyzing' || interview?.status === 'analyzed' || interview?.status === 'analysis_failed') {
-      navigate(`/interview/${id}/result`)
-    }
-  }, [interview?.status, id, navigate])
 
   const cardStyle = {
     maxWidth: 420, width: '100%', margin: '0 1.5rem', padding: '2.25rem 2rem',

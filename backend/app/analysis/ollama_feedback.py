@@ -164,8 +164,9 @@ Write your feedback using EXACTLY this format. Do not add any extra text outside
 
 **Answer Analysis**
 (Write one line for EVERY question, Question 1 through Question {len(questions_answers)})
-Question 1: [one sentence — what you did well and what was missing]
-Question 2: [one sentence — what you did well and what was missing]
+Question 1: [one sentence — if the answer was strong, say what was done well. \
+If the answer was weak or incomplete, say what was missing. Do NOT force both.]
+Question 2: [same rule — strong answers get praise only, weak answers get specific critique only]
 ...continue for all {len(questions_answers)} questions...
 
 **Communication Style**
@@ -176,7 +177,10 @@ Question 2: [one sentence — what you did well and what was missing]
 - [actionable recommendation using "you / your"]
 - [actionable recommendation using "you / your"]
 
-IMPORTANT: Use "you/your" not "the candidate". Write everything in English only."""
+IMPORTANT:
+- Use "you/your" not "the candidate".
+- Write everything in English only.
+- Do not always mention weaknesses if the answer was sufficient."""
 
     payload = json.dumps({
         "model": OLLAMA_MODEL,
