@@ -8,11 +8,6 @@ from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from . import auth
 
-try:
-    import httpx
-except ImportError:
-    httpx = None
-
 router = APIRouter()
 
 GOOGLE_TTS_KEY = os.getenv("GOOGLE_TTS_KEY", "")

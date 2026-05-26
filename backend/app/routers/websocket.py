@@ -538,6 +538,10 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
     try:
         logger.info("Interview session started: interview_id=%s", interview_id)
 
+        # Video segment tracking: seconds elapsed since interview start
+        session_start_time: float | None = None
+        last_q_video_offset: float = 0.0
+
         while True:
             try:
                 raw = await websocket.receive_text()
@@ -571,6 +575,8 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                 except Exception as e:
                     logger.warning(f"Could not clear previous answers: {e}")
                 update_interview_status("in_progress", "ws_init")
+                session_start_time = time.time()
+                last_q_video_offset = 0.0  # greeting starts at t=0
 
                 greeting = session.get_greeting()
                 if not await safe_send({
@@ -611,6 +617,9 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
 
                     logger.info(f"Transcription: {transcript[:100]}...")
 
+                    _now = time.time()
+                    video_end_sec = (_now - session_start_time) if session_start_time is not None else None
+
                     db = SessionLocal()
                     try:
                         print(f"🟢 Saving answer\n")
@@ -624,6 +633,8 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                             answer_text=transcript,
                             speech_rate_wpm=tm.get("speech_rate_wpm"),
                             pause_frequency_score=tm.get("pause_frequency_score"),
+                            video_start_second=last_q_video_offset,
+                            video_end_second=video_end_sec,
                         )
                         db.add(answer_record)
                         db.commit()
@@ -657,6 +668,9 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                         "phase": session.phase,
                     }):
                         break
+                    # Next answer's video segment starts now
+                    if session_start_time is not None:
+                        last_q_video_offset = time.time() - session_start_time
 
                 except Exception as e:
                     logger.error("Audio processing error: %s", e, exc_info=True)
@@ -671,6 +685,9 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                 try:
                     logger.info(f"Test transcript: {transcript[:100]}...")
 
+                    _now = time.time()
+                    video_end_sec = (_now - session_start_time) if session_start_time is not None else None
+
                     db = SessionLocal()
                     try:
                         current_q_num = session.question_count
@@ -680,6 +697,8 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                             question_order=current_q_num,
                             question_text=question_text,
                             answer_text=transcript,
+                            video_start_second=last_q_video_offset,
+                            video_end_second=video_end_sec,
                         )
                         db.add(answer_record)
                         db.commit()
@@ -712,6 +731,9 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                         "phase": session.phase,
                     }):
                         break
+                    # Next answer's video segment starts now
+                    if session_start_time is not None:
+                        last_q_video_offset = time.time() - session_start_time
 
                 except Exception as e:
                     logger.error(f"Test answer processing error: {e}", exc_info=True)
