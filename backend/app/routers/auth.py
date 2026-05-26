@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 from starlette.requests import Request
 
-from .messages import _, get_lang_from_header
+from .messages import _
 
 from ..database import SessionLocal
 from .. import models
@@ -72,40 +72,6 @@ def create_access_token(data: dict):
 
 
 def send_email(to_email: str, subject: str, body: str):
-    resend_key = os.getenv("RESEND_API_KEY")
-    if resend_key:
-        import json
-        import urllib.request
-        import urllib.error
-
-        email_from = os.getenv("EMAIL_FROM", "onboarding@resend.dev")
-        payload = {
-            "from": email_from,
-            "to": [to_email],
-            "subject": subject,
-            "text": body,
-        }
-        req = urllib.request.Request(
-            "https://api.resend.com/emails",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {resend_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                if 200 <= resp.status < 300:
-                    return
-                raw = resp.read().decode("utf-8", errors="replace")
-                raise HTTPException(status_code=500, detail=f"Email could not be sent (Resend): {raw}")
-        except urllib.error.HTTPError as e:
-            raw = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else str(e)
-            raise HTTPException(status_code=500, detail=f"Email could not be sent (Resend): {raw}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Email could not be sent (Resend): {repr(e)}")
-
     smtp_host = os.getenv("SMTP_HOST")
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
     smtp_user = os.getenv("SMTP_USER")
@@ -131,24 +97,22 @@ def send_email(to_email: str, subject: str, body: str):
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
-    request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     if not credentials:
-        raise HTTPException(status_code=401, detail=_("login_required", lang))
+        raise HTTPException(status_code=401, detail=_("login_required"))
     token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("user_id")
         if user_id is None:
-            raise HTTPException(status_code=401, detail=_("invalid_token", lang))
+            raise HTTPException(status_code=401, detail=_("invalid_token"))
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail=_("token_expired", lang))
+        raise HTTPException(status_code=401, detail=_("token_expired"))
     except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail=_("invalid_token", lang))
+        raise HTTPException(status_code=401, detail=_("invalid_token"))
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=401, detail=_("user_not_found", lang))
+        raise HTTPException(status_code=401, detail=_("user_not_found"))
     return user
 
 
@@ -162,20 +126,18 @@ class CreateUserRequest(BaseModel):
 def create_user(
     payload: CreateUserRequest,
     db: Session = Depends(get_db),
-    request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     email = (payload.email or "").strip().lower()
     password = payload.password
     if len(password) < 8:
-        raise HTTPException(status_code=400, detail=_("password_too_short", lang))
+        raise HTTPException(status_code=400, detail=_("password_too_short"))
     existing_user = db.query(models.User).filter(models.User.email == email).first()
     if existing_user:
-        raise HTTPException(status_code=400, detail=_("email_exists", lang))
+        raise HTTPException(status_code=400, detail=_("email_exists"))
 
     hashed_pw = hash_password(password)
     verification_token = uuid4().hex
-    expires_at = datetime.utcnow() + timedelta(hours=24)
+    expires_at = datetime.utcnow() + timedelta(minutes=5)
 
     new_user = models.User(
         email=email,
@@ -184,9 +146,6 @@ def create_user(
         verification_token=verification_token,
         verification_expires_at=expires_at,
     )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
 
     frontend_base = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
     verify_link = f"{frontend_base}/verify-email?token={verification_token}"
@@ -196,23 +155,22 @@ def create_user(
         "Hello,\n\n"
         "Please verify your email address to complete your Interview Simulation account registration by clicking the link below:\n\n"
         f"{verify_link}\n\n"
-        "This link is valid for 24 hours.\n\n"
+        "This link is valid for 5 minutes.\n\n"
         "If you did not create this account, please ignore this email.\n\n"
         "Interview Simulation"
     )
 
-    if os.getenv("DEV_AUTO_VERIFY") in ("1", "true", "True"):
-        new_user.is_verified = 1
-        new_user.verification_token = None
-        new_user.verification_expires_at = None
+    db.add(new_user)
+    try:
+        send_email(to_email=email, subject=subject, body=body)
         db.commit()
-        logger.info("DEV_AUTO_VERIFY: User %s auto-verified (email skipped)", email)
-    else:
-        try:
-            send_email(to_email=email, subject=subject, body=body)
-            logger.info("Verification email sent to %s", email)
-        except Exception as e:
-            logger.warning("Could not send verification email to %s: %s", email, repr(e))
+    except Exception:
+        db.rollback()
+        logger.warning("Could not send verification email to %s", email, exc_info=True)
+        raise HTTPException(status_code=500, detail="Verification email could not be sent.")
+
+    db.refresh(new_user)
+    logger.info("Verification email sent to %s", email)
 
     return {"id": new_user.id, "email": new_user.email, "message": "Registration successful. Please verify your email."}
 
@@ -236,13 +194,11 @@ def change_password(
     payload: ChangePasswordRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
-    request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     if not verify_password(payload.current_password, current_user.password):
-        raise HTTPException(status_code=400, detail=_("current_password_wrong", lang))
+        raise HTTPException(status_code=400, detail=_("current_password_wrong"))
     if len(payload.new_password) < 8:
-        raise HTTPException(status_code=400, detail=_("new_password_too_short", lang))
+        raise HTTPException(status_code=400, detail=_("new_password_too_short"))
     current_user.password = hash_password(payload.new_password)
     db.commit()
     return {"detail": "Password updated."}
@@ -304,14 +260,12 @@ def forgot_password(
 def reset_password(
     payload: ResetPasswordRequest,
     db: Session = Depends(get_db),
-    request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     token_str = (payload.token or "").strip()
     new_password = payload.new_password
 
     if len(new_password) < 8:
-        raise HTTPException(status_code=400, detail=_("new_password_too_short", lang))
+        raise HTTPException(status_code=400, detail=_("new_password_too_short"))
 
     token_row = (
         db.query(models.PasswordResetToken)
@@ -320,11 +274,11 @@ def reset_password(
     )
 
     if not token_row or token_row.used == 1 or token_row.expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail=_("invalid_reset_link", lang))
+        raise HTTPException(status_code=400, detail=_("invalid_reset_link"))
 
     user = db.query(models.User).filter(models.User.id == token_row.user_id).first()
     if not user:
-        raise HTTPException(status_code=400, detail=_("user_not_found", lang))
+        raise HTTPException(status_code=400, detail=_("user_not_found"))
 
     user.password = hash_password(new_password)
     token_row.used = 1
@@ -341,17 +295,15 @@ class VerifyEmailRequest(BaseModel):
 def verify_email(
     payload: VerifyEmailRequest,
     db: Session = Depends(get_db),
-    request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     token_str = (payload.token or "").strip()
     user = db.query(models.User).filter(models.User.verification_token == token_str).first()
     if not user:
-        raise HTTPException(status_code=400, detail=_("invalid_verification_code", lang))
+        raise HTTPException(status_code=400, detail="Invalid verification link.")
     if user.is_verified:
         return {"detail": "Email already verified."}
     if user.verification_expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail=_("verification_link_expired", lang))
+        raise HTTPException(status_code=400, detail=_("verification_link_expired"))
     user.is_verified = 1
     user.verification_token = None
     user.verification_expires_at = None
@@ -364,7 +316,14 @@ class ResendVerificationRequest(BaseModel):
 
 
 @router.post("/resend-verification")
-def resend_verification(payload: ResendVerificationRequest, db: Session = Depends(get_db)):
+def resend_verification(
+    payload: ResendVerificationRequest,
+    db: Session = Depends(get_db),
+    request: Request = None,
+):
+    ip = request.client.host if request and request.client else "unknown"
+    _check_rate_limit(f"resend-verification:{ip}", max_calls=5, window=60)
+
     email = (payload.email or "").strip().lower()
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user:
@@ -373,10 +332,9 @@ def resend_verification(payload: ResendVerificationRequest, db: Session = Depend
         return {"detail": "This email is already verified."}
 
     verification_token = uuid4().hex
-    expires_at = datetime.utcnow() + timedelta(hours=24)
+    expires_at = datetime.utcnow() + timedelta(minutes=5)
     user.verification_token = verification_token
     user.verification_expires_at = expires_at
-    db.commit()
 
     frontend_base = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
     verify_link = f"{frontend_base}/verify-email?token={verification_token}"
@@ -386,14 +344,18 @@ def resend_verification(payload: ResendVerificationRequest, db: Session = Depend
         "Hello,\n\n"
         "Please verify your email address to complete your Interview Simulation account registration by clicking the link below:\n\n"
         f"{verify_link}\n\n"
-        "This link is valid for 24 hours.\n\n"
+        "This link is valid for 5 minutes.\n\n"
+        "If you did not create this account, please ignore this email.\n\n"
         "Interview Simulation"
     )
 
     try:
         send_email(to_email=email, subject=subject, body=body)
+        db.commit()
     except Exception:
-        pass
+        db.rollback()
+        logger.warning("Could not resend verification email to %s", email, exc_info=True)
+        raise HTTPException(status_code=500, detail="Verification email could not be sent.")
 
     return {"detail": "Verification link sent."}
 
@@ -404,16 +366,15 @@ def login(
     db: Session = Depends(get_db),
     request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     ip = request.client.host if request and request.client else "unknown"
     _check_rate_limit(f"login:{ip}", max_calls=10, window=60)
-    email = payload.get("email", "")
+    email = (payload.get("email", "") or "").strip().lower()
     password = payload.get("password", "")
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user or not verify_password(password, user.password):
-        raise HTTPException(status_code=401, detail=_("invalid_credentials", lang))
+        raise HTTPException(status_code=401, detail=_("invalid_credentials"))
     if not user.is_verified:
-        raise HTTPException(status_code=403, detail=_("email_not_verified", lang))
+        raise HTTPException(status_code=403, detail=_("email_not_verified"))
     token = create_access_token(data={"user_id": user.id})
     return {
         "access_token": token,

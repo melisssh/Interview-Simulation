@@ -12,7 +12,6 @@ export default function Dashboard() {
   const fetchInterviewsRef = useRef(null)
   const navigate = useNavigate()
   const token = localStorage.getItem('token')
-  const email = localStorage.getItem('email') || ''
 
   const fetchInterviews = () => {
     return fetch(`${API}/interviews`, { headers: { Authorization: `Bearer ${token}` } })

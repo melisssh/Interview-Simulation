@@ -192,56 +192,6 @@ class ContentAnalyzer:
             return min(10, int((word_count - 800) / 300 * 10))
         return 0
 
-    def detect_star_structure(self, answer: str) -> Dict[str, bool]:
-        """
-        Detect STAR structure elements in answer
-        Returns: {situation: bool, task: bool, action: bool, result: bool}
-        """
-        answer_lower = answer.lower()
-
-        situation_keywords = [
-            "situation", "context", "at the time", "when i", "initially",
-            "background", "scenario", "at that point", "there was", "we were",
-            "at the start", "at that time", "during the process", "in that period",
-            "i encountered", "it happened", "there were", "in the phase", "working at",
-        ]
-        task_keywords = [
-            "task", "responsible", "needed to", "required to", "goal was",
-            "objective", "my role", "assigned to", "expected to", "had to",
-            "duty", "responsibility", "was needed", "need", "target", "purpose",
-            "was expected", "my duty", "i took on", "requirement", "to complete",
-            "to solve", "to ensure",
-        ]
-        action_keywords = [
-            "i did", "we implemented", "i built", "developed", "decided to",
-            "i created", "i designed", "i organized", "i analyzed", "i used",
-            "i applied", "i coordinated", "i communicated", "approach was",
-            "i took", "i started", "i implemented", "i decided", "i established",
-            "i researched", "i held a meeting", "i preferred",
-        ]
-        result_keywords = [
-            "outcome", "result", "learned", "achieved", "improved", "delivered",
-            "gained", "increased", "reduced", "solved", "completed", "realized",
-            "accomplished", "as a result", "consequently", "in the end", "ultimately",
-            "success", "i completed", "i learned", "successful", "i improved",
-            "i obtained", "i provided", "i won", "i increased", "i decreased",
-            "i solved", "i accomplished", "i reached", "i noticed", "i contributed",
-            "efficiency", "impact", "feedback", "satisfaction",
-        ]
-
-        situation = any(kw in answer_lower for kw in situation_keywords)
-        task = any(kw in answer_lower for kw in task_keywords)
-        action = any(kw in answer_lower for kw in action_keywords)
-        result = any(kw in answer_lower for kw in result_keywords)
-
-        logger.info(f"STAR: S={situation}, T={task}, A={action}, R={result}")
-        return {
-            "situation": situation,
-            "task": task,
-            "action": action,
-            "result": result
-        }
-
     def calculate_star_score(self, answer: str) -> int:
         """
         Calculate STAR structure score (0-100).

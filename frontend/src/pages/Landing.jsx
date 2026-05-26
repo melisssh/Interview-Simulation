@@ -36,17 +36,6 @@ const styles = {
     marginLeft: 'auto',
     marginRight: 'auto',
   },
-  ctaBtn: {
-    display: 'inline-block',
-    padding: '0.85rem 2rem',
-    background: '#111',
-    color: '#fff',
-    borderRadius: 10,
-    textDecoration: 'none',
-    fontWeight: 600,
-    fontSize: '1.05rem',
-    transition: 'transform 0.15s',
-  },
   heroFeatures: {
     display: 'flex',
     justifyContent: 'center',
@@ -80,12 +69,6 @@ const styles = {
     gap: '1.25rem',
     alignItems: 'stretch',
   },
-  step: {
-    padding: '1.25rem',
-    background: '#f9fafb',
-    borderRadius: 12,
-    border: '1px solid #e5e7eb',
-  },
   stepNum: {
     width: 32,
     height: 32,
@@ -109,11 +92,6 @@ const styles = {
     fontSize: '0.95rem',
     color: '#6b7280',
     lineHeight: 1.5,
-  },
-  featuresGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-    gap: '1.5rem',
   },
   featureCard: {
     padding: '1.5rem',

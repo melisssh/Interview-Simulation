@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
-import { UNIVERSITIES, filterUniversities } from '../data/universities'
-import { DEPARTMENTS, filterDepartments } from '../data/departments'
+import { filterUniversities } from '../data/universities'
+import { filterDepartments } from '../data/departments'
 
 import { API } from '../api'
 
@@ -35,7 +35,7 @@ const inputStyle = {
 
 const labelStyle = { fontSize: '0.9rem', fontWeight: 500, color: '#374151' }
 
-function Autocomplete({ value, onChange, options, placeholder, moreResultsText }) {
+function Autocomplete({ value, onChange, options, placeholder, moreResultsText, required = false }) {
   const [show, setShow] = useState(false)
   const [input, setInput] = useState(value)
   const ref = useRef(null)
@@ -62,6 +62,7 @@ function Autocomplete({ value, onChange, options, placeholder, moreResultsText }
         onChange={(e) => { setInput(e.target.value); onChange(e.target.value); setShow(true) }}
         onFocus={() => setShow(true)}
         placeholder={placeholder}
+        required={required}
         style={inputStyle}
       />
       {show && items.length > 0 && (
@@ -140,6 +141,15 @@ export default function Profile() {
     e.preventDefault()
     setError('')
     setMessage('')
+
+    const trimmedFullName = (full_name || '').trim()
+    const trimmedUniversity = (university || '').trim()
+    const trimmedDepartment = (department || '').trim()
+    if (!trimmedFullName || !trimmedUniversity || !trimmedDepartment || !class_year) {
+      setError('Please fill in all required fields.')
+      return
+    }
+
     setSaving(true)
     try {
       const res = await fetch(`${API}/profile`, {
@@ -149,9 +159,9 @@ export default function Profile() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          full_name: (full_name || '').trim(),
-          university: (university || '').trim(),
-          department: (department || '').trim(),
+          full_name: trimmedFullName,
+          university: trimmedUniversity,
+          department: trimmedDepartment,
           class_year: class_year || null,
         }),
       })
@@ -218,11 +228,11 @@ export default function Profile() {
             </div>
             <div style={field}>
               <label style={labelStyle}>School (university) *</label>
-              <Autocomplete value={university} onChange={setUniversity} options={filterUniversities} placeholder="Type university name" moreResultsText="Type more for more results..." />
+              <Autocomplete value={university} onChange={setUniversity} options={filterUniversities} placeholder="Type university name" moreResultsText="Type more for more results..." required />
             </div>
             <div style={field}>
               <label style={labelStyle}>Department *</label>
-              <Autocomplete value={department} onChange={setDepartment} options={filterDepartments} placeholder="Type department name" moreResultsText="Type more for more results..." />
+              <Autocomplete value={department} onChange={setDepartment} options={filterDepartments} placeholder="Type department name" moreResultsText="Type more for more results..." required />
             </div>
             <div style={field}>
               <label style={labelStyle}>Class *</label>

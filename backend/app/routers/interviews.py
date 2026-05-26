@@ -1,21 +1,16 @@
-import random
-import json
 import logging
 from pathlib import Path
-from typing import List, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from starlette.requests import Request
 
 from ..database import SessionLocal
 from .. import models
 from .auth import get_current_user, get_db
-from .ollama_service import generate_questions, fallback_questions, research_company
-from ..cv_read import read_cv_plaintext
+from .ollama_service import research_company
 from ..analysis import stt
-from .messages import _, get_lang_from_header
+from .messages import _
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +36,6 @@ def get_categories(db: Session = Depends(get_db), current_user: models.User = De
 class InterviewCreate(BaseModel):
     title: str
     domain: str
-    language: str
     company_name: str | None = None
     department_name: str | None = None
     position: str | None = None
@@ -54,25 +48,23 @@ def create_interview(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
-    request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     profile = db.query(models.Profile).filter(models.Profile.user_id == current_user.id).first()
     if not profile or not getattr(profile, "cv_path", None):
-        raise HTTPException(status_code=400, detail=_("cv_required", lang))
+        raise HTTPException(status_code=400, detail=_("cv_required"))
 
     cn = (payload.company_name or "").strip()
     dn = (payload.department_name or "").strip()
     pos = (payload.position or "").strip()
     sec = (payload.sector or "").strip()
     if not cn or not dn or not pos or not sec:
-        raise HTTPException(status_code=400, detail=_("fields_required", lang))
+        raise HTTPException(status_code=400, detail=_("fields_required"))
 
     new_interview = models.Interview(
         user_id=current_user.id,
         title=payload.title,
         domain=payload.domain,
-        language=payload.language,
+        language="en",
         company_name=cn,
         department_name=dn,
         position=pos,
@@ -83,7 +75,6 @@ def create_interview(
     db.commit()
     db.refresh(new_interview)
 
-    cv_path = profile.cv_path
     background_tasks.add_task(
         _prepare_interview_background,
         interview_id=new_interview.id,
@@ -91,19 +82,13 @@ def create_interview(
         company_name=cn,
         department_name=dn,
         domain=payload.domain,
-        language=payload.language,
         sector=sec,
-        profile_university=profile.university,
-        profile_department=profile.department,
-        profile_class_year=profile.class_year,
-        cv_path=cv_path,
     )
 
     return {
         "id": new_interview.id,
         "title": new_interview.title,
         "domain": new_interview.domain,
-        "language": new_interview.language,
         "status": "preparing",
         "created_at": new_interview.created_at,
     }
@@ -115,16 +100,14 @@ def retry_preparation(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
-    request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
-        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
+        raise HTTPException(status_code=404, detail=_("interview_not_found"))
     if interview.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail=_("not_authorized", lang))
+        raise HTTPException(status_code=403, detail=_("not_authorized"))
     if interview.status != "preparation_failed":
-        raise HTTPException(status_code=400, detail=_("not_preparation_failed", lang))
+        raise HTTPException(status_code=400, detail=_("not_preparation_failed"))
 
     db.query(models.InterviewQuestion).filter(
         models.InterviewQuestion.interview_id == interview_id
@@ -134,9 +117,6 @@ def retry_preparation(
     db.commit()
     db.refresh(interview)
 
-    profile = db.query(models.Profile).filter(models.Profile.user_id == current_user.id).first()
-    cv_path = profile.cv_path if profile else None
-
     background_tasks.add_task(
         _prepare_interview_background,
         interview_id=interview.id,
@@ -144,12 +124,7 @@ def retry_preparation(
         company_name=interview.company_name or "",
         department_name=interview.department_name or "",
         domain=interview.domain,
-        language=interview.language,
         sector=interview.sector or "",
-        profile_university=profile.university if profile else None,
-        profile_department=profile.department if profile else None,
-        profile_class_year=profile.class_year if profile else None,
-        cv_path=cv_path,
     )
 
     return {"id": interview.id, "status": "preparing"}
@@ -162,12 +137,7 @@ def _prepare_interview_background(
     company_name: str,
     department_name: str,
     domain: str,
-    language: str,
     sector: str | None,
-    profile_university: str | None,
-    profile_department: str | None,
-    profile_class_year: str | None,
-    cv_path: str | None,
 ):
     """Background task: company research → question generation → ready."""
     logger.info(f"Background preparation started for interview {interview_id}")
@@ -199,7 +169,6 @@ def _prepare_interview_background(
         for order, cat in enumerate(categories, 1):
             db.add(models.InterviewQuestion(
                 interview_id=interview_id,
-                question_id=None,
                 question_text=cat,
                 order=order,
             ))
@@ -235,7 +204,6 @@ def list_interviews(
             "id": i.id,
             "title": i.title,
             "domain": i.domain,
-            "language": i.language,
             "status": i.status,
             "created_at": i.created_at,
         }
@@ -248,14 +216,12 @@ def delete_interview(
     interview_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
-    request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
-        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
+        raise HTTPException(status_code=404, detail=_("interview_not_found"))
     if interview.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail=_("access_denied", lang))
+        raise HTTPException(status_code=403, detail=_("access_denied"))
     db.query(models.InterviewQuestion).filter(models.InterviewQuestion.interview_id == interview_id).delete(synchronize_session=False)
     db.query(models.InterviewAnswer).filter(models.InterviewAnswer.interview_id == interview_id).delete(synchronize_session=False)
     db.query(models.Transcript).filter(models.Transcript.interview_id == interview_id).delete(synchronize_session=False)
@@ -280,16 +246,14 @@ def update_interview_status(
     payload: InterviewStatusUpdate,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
-    request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
-        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
+        raise HTTPException(status_code=404, detail=_("interview_not_found"))
     if interview.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail=_("access_denied", lang))
+        raise HTTPException(status_code=403, detail=_("access_denied"))
     if payload.status not in ALLOWED_INTERVIEW_STATUSES:
-        raise HTTPException(status_code=400, detail=_("invalid_status", lang))
+        raise HTTPException(status_code=400, detail=_("invalid_status"))
     interview.status = payload.status
     db.commit()
     db.refresh(interview)
@@ -306,14 +270,12 @@ async def upload_interview_video(
     background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
-    request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
-        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
+        raise HTTPException(status_code=404, detail=_("interview_not_found"))
     if interview.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail=_("access_denied", lang))
+        raise HTTPException(status_code=403, detail=_("access_denied"))
 
     allowed_types = {"video/webm", "video/mp4", "video/x-matroska"}
     if file.content_type not in allowed_types:
@@ -370,27 +332,18 @@ def get_interview(
     interview_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
-    request: Request = None,
 ):
-    lang = get_lang_from_header(request.headers.get("accept-language") if request else None)
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
-        raise HTTPException(status_code=404, detail=_("interview_not_found", lang))
+        raise HTTPException(status_code=404, detail=_("interview_not_found"))
     if interview.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail=_("access_denied", lang))
+        raise HTTPException(status_code=403, detail=_("access_denied"))
 
     iqs = db.query(models.InterviewQuestion).filter(models.InterviewQuestion.interview_id == interview_id).order_by(models.InterviewQuestion.order).all()
     questions = []
     for iq in iqs:
-        text = None
-        if iq.question_id is not None:
-            q = db.query(models.Question).filter(models.Question.id == iq.question_id).first()
-            if q:
-                text = q.text
-        elif iq.question_text:
-            text = iq.question_text
-        if text:
-            questions.append({"order": iq.order, "text": text})
+        if iq.question_text:
+            questions.append({"order": iq.order, "text": iq.question_text})
 
     transcript_row = db.query(models.Transcript).filter(
         models.Transcript.interview_id == interview_id
@@ -413,24 +366,11 @@ def get_interview(
     answers = db.query(models.InterviewAnswer).filter(
         models.InterviewAnswer.interview_id == interview_id
     ).order_by(models.InterviewAnswer.question_order).all()
-    def _parse_question_text(raw: str | None) -> str | None:
-        """Parse question_text — may be stored as JSON {"text": "..."} from older sessions."""
-        if not raw:
-            return raw
-        raw = raw.strip()
-        if raw.startswith("{"):
-            try:
-                import json as _json
-                parsed = _json.loads(raw)
-                return parsed.get("text", raw)
-            except Exception:
-                pass
-        return raw
 
     answers_data = [
         {
             "question_order": a.question_order,
-            "question_text": _parse_question_text(a.question_text),
+            "question_text": a.question_text,
             "answer_text": a.answer_text,
         }
         for a in answers
@@ -441,7 +381,6 @@ def get_interview(
         "user_id": interview.user_id,
         "title": interview.title,
         "domain": interview.domain,
-        "language": interview.language,
         "status": interview.status,
         "created_at": interview.created_at,
         "company_name": interview.company_name,

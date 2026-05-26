@@ -3,13 +3,10 @@ import json
 import base64
 import logging
 import tempfile
-import time
 import wave
-import psutil
 from typing import List, Dict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from sqlalchemy.orm import Session
 
 from ..analysis.speech_metrics import (
     pause_frequency_score_from_pcm,
@@ -18,7 +15,7 @@ from ..analysis.speech_metrics import (
 )
 from ..database import SessionLocal
 from .. import models
-from .messages import _, get_lang_from_header
+from .messages import _
 
 try:
     from faster_whisper import WhisperModel
@@ -31,8 +28,6 @@ except ImportError:
     ollama = None
 
 
-def _looks_wrong_language(text: str, language: str) -> bool:
-    return False
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +82,9 @@ def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "en") -> di
             wf.setframerate(48000)
             wf.writeframes(audio_bytes)
         model = _get_ws_whisper_model()
-        _stt_start = time.time()
         segments, _ = model.transcribe(tmp_path, language=language)
         segs = list(segments)
         text = "".join(seg.text for seg in segs).strip()
-        _stt_elapsed = time.time() - _stt_start
-        print(f"[PERF] Ses→Yazı (STT) süresi: {_stt_elapsed:.2f}sn | kelime: {len(text.split())}", flush=True)
         dur = pcm_duration_seconds(len(audio_bytes))
         wc = len(text.split())
         wpm = words_per_minute(wc, dur)
@@ -134,12 +126,10 @@ class InterviewSession:
 
     PHASE_GREETING = "greeting"
     PHASE_QUESTIONS = "questions"
-    PHASE_CLOSING = "closing"
     PHASE_ENDED = "ended"
 
-    def __init__(self, interview, profile=None, prepared_questions=None):
+    def __init__(self, interview, prepared_questions=None):
         self.interview = interview
-        self.profile = profile or {}
         self.domain = interview.domain or "general"
         self.language = interview.language or "en"
         self.question_count = 0
@@ -148,9 +138,6 @@ class InterviewSession:
         self.history: List[Dict] = []
         self.phase = self.PHASE_GREETING
         self.last_question_text = ""  # for follow-up reference
-        self.min_questions = 5
-        self.max_questions = 7
-        self.base_questions = 7
 
         # CV is intentionally not used in question generation.
         # Questions are generated based on the conversation history only.
@@ -219,43 +206,18 @@ RULES:
 7. FOCUS: Ask about motivation, interest, why they applied, and cultural fit. NOT technical tools or skills.
 8. The candidate is APPLYING to the company, NOT working there. Never say "at your company" as if they work there."""
 
-    def _get_fallback(self) -> str:
-        if self.phase == self.PHASE_GREETING:
-            return "Welcome! Could you briefly introduce yourself -- your education and who you are?"
-
-        if self.phase == self.PHASE_CLOSING:
-            return "Thank you for your time. The interview is now complete. We will get back to you soon."
-
-        fallbacks = [
-            "Can you give a concrete example and explain your exact actions?",
-            "What was the most difficult part, and how did you handle it?",
-            "What would you do differently if you faced the same situation again?",
-            "How does this experience prepare you for this role?",
-            "Thank you. Is there anything else you would like to add?",
-        ]
-        idx = min(max(0, self.question_count - 1), len(fallbacks) - 1)
-        return fallbacks[idx]
-
     def _ask_ollama(self, prompt: str) -> str | None:
-        # OPTIMIZATION: Ollama is heavy; use fallback questions if needed.
-        # To disable Ollama, add True at the start of this function:
-        # if True:  # Disable Ollama
-        #     return None
-
         try:
             messages = [{"role": "system", "content": self._build_system_prompt()}]
             for h in self.history[-8:]:
                 messages.append(h)
             messages.append({"role": "user", "content": prompt})
 
-            _ollama_start = time.time()
             response = _ollama_chat(
                 model=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
                 messages=messages,
             )
             out = (response.get("message", {}).get("content", "") or "").strip()
-            _ollama_elapsed = time.time() - _ollama_start
-            print(f"[PERF] Soru üretim süresi (Ollama): {_ollama_elapsed:.2f}sn", flush=True)
             return " ".join(out.split())
         except Exception as e:
             logger.error(f"Ollama LLM error: {e}")
@@ -311,6 +273,7 @@ RULES:
                 "career":    "Where do you see yourself in the next few years, and how does this role fit into your career path?",
                 "strengths": "What would you say is your greatest strength, and is there an area you are actively working to improve?",
                 "company":   "How familiar are you with our company, and what do you find most interesting about this sector?",
+                "team_hr":   "Can you describe a team experience where you contributed to a shared goal and handled a challenge or disagreement?",
             }
             q = fallbacks.get(category, "Could you tell me more about your experience in this area?")
         return q
@@ -341,13 +304,11 @@ RULES:
         return {
             "word_count": wc,
             "is_short": wc < 35,
-            "is_detailed": wc > 120,
             "is_struggling": is_struggling,
         }
 
     def handle_answer(self, transcript: str) -> tuple[str, bool]:
         """Phase 2: Process answer, generate next question. Returns (response, is_ended)."""
-        _handle_start = time.time()
         self.answer_count += 1
         self.history.append({"role": "user", "content": transcript})
 
@@ -402,11 +363,6 @@ RULES:
         q = self._generate_question_for_category(next_category)
         self.last_question_text = q
         self.history.append({"role": "assistant", "content": q})
-        _handle_elapsed = time.time() - _handle_start
-        _cpu = psutil.cpu_percent()
-        _ram = psutil.virtual_memory().used / (1024 * 1024)
-        print(f"[PERF] Cevap→Yeni Soru toplam gecikme: {_handle_elapsed:.2f}sn", flush=True)
-        print(f"[PERF] Sistem kaynakları: CPU %{_cpu:.1f} | RAM {_ram:.0f}MB", flush=True)
         return q, False
 
 
@@ -432,7 +388,6 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
 
     await websocket.accept()
     logger.info("WebSocket accepted: interview_id=%s", interview_id)
-    ws_lang = get_lang_from_header(websocket.headers.get("accept-language"))
 
     db = SessionLocal()
 
@@ -440,7 +395,7 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
         interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
 
         if not interview:
-            await websocket.send_json({"type": "error", "message": _("interview_not_found", ws_lang)})
+            await websocket.send_json({"type": "error", "message": _("interview_not_found")})
             await websocket.close(code=4004)
             return
 
@@ -458,50 +413,29 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
             logger.info("Interview questions loaded: %d", len(iqs))
             for iq in iqs:
                 question_text = iq.question_text or ""
-                # Fix #2: question_text may be stored as JSON string {"text": "..."}
-                if question_text and question_text.strip().startswith("{"):
-                    try:
-                        parsed = json.loads(question_text)
-                        question_text = parsed.get("text", question_text)
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                if not question_text and iq.question_id:
-                    q = db.query(models.Question).filter(
-                        models.Question.id == iq.question_id
-                    ).first()
-                    if q:
-                        question_text = q.text
                 interview_questions[iq.order] = {
                     "text": question_text,
                     "id": iq.id
                 }
 
-        # Profile data (no CV — questions are based on conversation history only)
-        profile_data = {}
-        if interview:
-            profile = db.query(models.Profile).filter(models.Profile.user_id == interview.user_id).first()
-            if profile:
-                profile_data = {}
-
         if not interview:
-            await websocket.send_json({"type": "error", "message": _("interview_not_found", ws_lang)})
+            await websocket.send_json({"type": "error", "message": _("interview_not_found")})
             return
 
-        iv_lang = interview.language or "en"
         if interview.status == "preparing":
-            await websocket.send_json({"type": "error", "message": _("ws_not_ready", iv_lang)})
+            await websocket.send_json({"type": "error", "message": _("ws_not_ready")})
             return
         if interview.status == "preparation_failed":
-            await websocket.send_json({"type": "error", "message": _("ws_prep_failed", iv_lang)})
+            await websocket.send_json({"type": "error", "message": _("ws_prep_failed")})
             return
 
-        session = InterviewSession(interview, profile=profile_data, prepared_questions=interview_questions)
+        session = InterviewSession(interview, prepared_questions=interview_questions)
         logger.info("Session created: domain=%s language=%s", session.domain, session.language)
     except Exception as e:
         logger.error("WebSocket setup error: %s", e, exc_info=True)
         try:
-            await websocket.send_json({"type": "error", "message": f"{_('interview_not_found', ws_lang)}: {str(e)}"})
-        except:
+            await websocket.send_json({"type": "error", "message": f"{_('interview_not_found')}: {str(e)}"})
+        except Exception:
             pass
         return
     finally:
@@ -538,6 +472,10 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
     try:
         logger.info("Interview session started: interview_id=%s", interview_id)
 
+        # Video segment tracking: seconds elapsed since interview start
+        session_start_time: float | None = None
+        last_q_video_offset: float = 0.0
+
         while True:
             try:
                 raw = await websocket.receive_text()
@@ -556,8 +494,6 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
             if msg_type == "init":
                 session.domain = data.get("domain", session.domain)
                 session.language = data.get("language", session.language)
-                session.base_questions = data.get("max_questions", 7)
-                session.max_questions = max(session.min_questions, min(session.base_questions, session.max_questions))
                 session.answer_count = 0
                 # Clear any previous answers for this interview (in case of reconnection/restart)
                 try:
@@ -571,14 +507,13 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                 except Exception as e:
                     logger.warning(f"Could not clear previous answers: {e}")
                 update_interview_status("in_progress", "ws_init")
+                session_start_time = time.time()
+                last_q_video_offset = 0.0  # greeting starts at t=0
 
                 greeting = session.get_greeting()
                 if not await safe_send({
                     "type": "question",
                     "question": greeting,
-                    "q_num": 1,
-                    "total": session.max_questions,
-                    "phase": session.phase,
                 }):
                     break
 
@@ -602,18 +537,17 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                         if not await safe_send({
                             "type": "question",
                             "question": re_ask,
-                            "q_num": session.answer_count + 1,
-                            "total": session.max_questions,
-                            "phase": session.phase,
                         }):
                             break
                         continue
 
                     logger.info(f"Transcription: {transcript[:100]}...")
 
+                    _now = time.time()
+                    video_end_sec = (_now - session_start_time) if session_start_time is not None else None
+
                     db = SessionLocal()
                     try:
-                        print(f"🟢 Saving answer\n")
                         current_q_num = session.question_count
                         question_text = session.last_question_text or interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
 
@@ -624,6 +558,8 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                             answer_text=transcript,
                             speech_rate_wpm=tm.get("speech_rate_wpm"),
                             pause_frequency_score=tm.get("pause_frequency_score"),
+                            video_start_second=last_q_video_offset,
+                            video_end_second=video_end_sec,
                         )
                         db.add(answer_record)
                         db.commit()
@@ -639,11 +575,8 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                         update_interview_status("analyzing", "ws_auto_end")
                         if not await safe_send({
                             "type": "ended",
-                            "message": _("ws_completed", session.language),
+                            "message": _("ws_completed"),
                             "question": response_text,
-                            "q_num": session.question_count,
-                            "total": session.max_questions,
-                            "transcript": transcript,
                         }):
                             break
                         break
@@ -651,12 +584,11 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                     if not await safe_send({
                         "type": "question",
                         "question": response_text,
-                        "transcript": transcript,
-                        "q_num": session.question_count,
-                        "total": session.max_questions,
-                        "phase": session.phase,
                     }):
                         break
+                    # Next answer's video segment starts now
+                    if session_start_time is not None:
+                        last_q_video_offset = time.time() - session_start_time
 
                 except Exception as e:
                     logger.error("Audio processing error: %s", e, exc_info=True)
@@ -671,6 +603,9 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                 try:
                     logger.info(f"Test transcript: {transcript[:100]}...")
 
+                    _now = time.time()
+                    video_end_sec = (_now - session_start_time) if session_start_time is not None else None
+
                     db = SessionLocal()
                     try:
                         current_q_num = session.question_count
@@ -680,6 +615,8 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                             question_order=current_q_num,
                             question_text=question_text,
                             answer_text=transcript,
+                            video_start_second=last_q_video_offset,
+                            video_end_second=video_end_sec,
                         )
                         db.add(answer_record)
                         db.commit()
@@ -712,6 +649,9 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                         "phase": session.phase,
                     }):
                         break
+                    # Next answer's video segment starts now
+                    if session_start_time is not None:
+                        last_q_video_offset = time.time() - session_start_time
 
                 except Exception as e:
                     logger.error(f"Test answer processing error: {e}", exc_info=True)

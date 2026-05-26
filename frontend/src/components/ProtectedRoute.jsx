@@ -22,8 +22,8 @@ export default function ProtectedRoute({ children }) {
         }
       })
       .catch(() => {
-        // Network error — allow through so app works offline-ish
-        setStatus('ok')
+        localStorage.removeItem('token')
+        setStatus('invalid')
       })
   }, [])
 
