@@ -35,7 +35,6 @@ const labelStyle = { fontSize: '0.9rem', fontWeight: 500, color: '#374151' }
 export default function InterviewNew() {
   const [title, setTitle] = useState('')
   const [domain, setDomain] = useState('')
-  const [language] = useState('en')
   const [companyName, setCompanyName] = useState('')
   const [departmentName, setDepartmentName] = useState('')
   const [position, setPosition] = useState('')
@@ -48,7 +47,16 @@ export default function InterviewNew() {
 
   useEffect(() => {
     if (!token) { navigate('/login'); return }
-    fetch(`${API}/categories`, { headers: { Authorization: `Bearer ${token}` } }).then((res) => res.json()).then(setCategories).catch(() => setError('Could not load categories'))
+    fetch(`${API}/categories`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('Could not load categories')
+        const data = await res.json()
+        setCategories(Array.isArray(data) ? data : [])
+      })
+      .catch(() => {
+        setCategories([])
+        setError('Could not load categories')
+      })
   }, [token, navigate])
 
   async function handleSubmit(e) {
@@ -61,6 +69,11 @@ export default function InterviewNew() {
     const finalPosition = (position || '').trim()
     const finalTitle = (title || '').trim()
 
+    if (!finalTitle) {
+      setError('Title is required.')
+      return
+    }
+
     setLoading(true)
     try {
       const res = await fetch(`${API}/interviews`, {
@@ -69,7 +82,6 @@ export default function InterviewNew() {
         body: JSON.stringify({
           title: finalTitle,
           domain,
-          language,
           company_name: finalCompany,
           department_name: finalDepartment,
           position: finalPosition,

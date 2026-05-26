@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import Header from '../components/Header'
 
 import { API } from '../api'
@@ -10,7 +10,6 @@ export default function Register() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [registered, setRegistered] = useState(false)
-  const navigate = useNavigate()
 
   async function handleSubmit(e) {
     e.preventDefault()

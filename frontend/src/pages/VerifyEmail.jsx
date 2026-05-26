@@ -1,16 +1,16 @@
 import { useState, useEffect } from 'react'
-import { useSearchParams, Link, useNavigate } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
 import Header from '../components/Header'
 
 import { API } from '../api'
 
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams()
-  const navigate = useNavigate()
   const [status, setStatus] = useState('loading')
   const [message, setMessage] = useState('')
   const [resendEmail, setResendEmail] = useState('')
   const [resendMsg, setResendMsg] = useState('')
+  const [resendError, setResendError] = useState('')
 
   const token = searchParams.get('token')
 
@@ -43,16 +43,21 @@ export default function VerifyEmail() {
   async function handleResend(e) {
     e.preventDefault()
     setResendMsg('')
+    setResendError('')
     try {
       const res = await fetch(`${API}/resend-verification`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: resendEmail.trim().toLowerCase() }),
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setResendError(data.detail || 'Verification link could not be sent.')
+        return
+      }
       setResendMsg(data.detail || 'Verification link sent.')
     } catch {
-      setResendMsg('Connection error.')
+      setResendError('Connection error.')
     }
   }
 
@@ -81,7 +86,7 @@ export default function VerifyEmail() {
             <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>✕</div>
             <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: '#111', marginBottom: '0.5rem' }}>Verification failed</h1>
             <p style={{ fontSize: '1rem', color: '#6b7280', marginBottom: '1rem' }}>{message}</p>
-            {message.includes('expired') && (
+            {status === 'error' && (
               <div style={{ marginTop: '2rem', textAlign: 'left' }}>
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '1rem' }}>Get a new verification link</h3>
                 <form onSubmit={handleResend} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -102,6 +107,7 @@ export default function VerifyEmail() {
                   }}>Resend</button>
                 </form>
                 {resendMsg && <p style={{ color: '#059669', marginTop: '0.5rem', fontSize: '0.9rem' }}>{resendMsg}</p>}
+                {resendError && <p style={{ color: '#dc2626', marginTop: '0.5rem', fontSize: '0.9rem' }}>{resendError}</p>}
               </div>
             )}
             <p style={{ marginTop: '1.5rem', fontSize: '0.95rem', color: '#6b7280' }}>
@@ -133,6 +139,7 @@ export default function VerifyEmail() {
               }}>Send verification link</button>
             </form>
             {resendMsg && <p style={{ color: '#059669', marginTop: '0.5rem', fontSize: '0.9rem' }}>{resendMsg}</p>}
+            {resendError && <p style={{ color: '#dc2626', marginTop: '0.5rem', fontSize: '0.9rem' }}>{resendError}</p>}
           </div>
         )}
       </div>

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, Navigate } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import Header from '../components/Header'
 
 import { API } from '../api'
@@ -40,7 +40,6 @@ export default function Account() {
   const [pwError, setPwError] = useState('')
   const [pwLoading, setPwLoading] = useState(false)
 
-  const navigate = useNavigate()
   const token = localStorage.getItem('token')
   const email = localStorage.getItem('email') || ''
 
@@ -56,6 +55,10 @@ export default function Account() {
     }
     if (newPassword !== confirmPassword) {
       setPwError('New password and confirmation must match.')
+      return
+    }
+    if (newPassword.length < 8) {
+      setPwError('New password must be at least 8 characters.')
       return
     }
     setPwLoading(true)

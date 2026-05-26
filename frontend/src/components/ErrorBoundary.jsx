@@ -1,7 +1,7 @@
 import { Component } from 'react'
 import { Link } from 'react-router-dom'
 
-function ErrorFallback({ error, resetErrorBoundary }) {
+function ErrorFallback({ resetErrorBoundary }) {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f9fafb' }}>
       <div style={{ maxWidth: 400, width: '100%', margin: '0 1.5rem', textAlign: 'center' }}>
@@ -53,7 +53,7 @@ export default class ErrorBoundary extends Component {
 
   render() {
     if (this.state.hasError) {
-      return <ErrorFallback error={this.state.error} resetErrorBoundary={() => this.setState({ hasError: false, error: null })} />
+      return <ErrorFallback resetErrorBoundary={() => this.setState({ hasError: false, error: null })} />
     }
     return this.props.children
   }

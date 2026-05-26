@@ -25,7 +25,6 @@ MSG = {
     "ws_not_ready": "Interview is not ready yet. Please wait.",
     "ws_prep_failed": "Interview preparation failed. Please try again.",
     "ws_completed": "Interview completed. Thank you.",
-    "ws_ended": "Interview ended.",
 }
 
 
@@ -33,5 +32,3 @@ def _(key: str, lang: str = "en") -> str:
     return MSG.get(key, key)
 
 
-def get_lang_from_header(accept_language: str | None = None) -> str:
-    return "en"

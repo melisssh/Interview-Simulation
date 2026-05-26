@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float
 from datetime import datetime, timedelta
 
 from .database import Base
@@ -53,25 +53,11 @@ class Category(Base):
     description = Column(String, nullable=True)
 
 
-class Question(Base):
-    __tablename__ = "questions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    text = Column(String, nullable=False)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
-    language = Column(String, nullable=False)            # "tr" / "en"
-    difficulty = Column(Integer, nullable=True)          # 1–5
-    is_active = Column(Integer, default=1)               # 1 = active, 0 = inactive
-    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 class InterviewQuestion(Base):
     __tablename__ = "interview_questions"
 
     id = Column(Integer, primary_key=True, index=True)
     interview_id = Column(Integer, ForeignKey("interviews.id"), nullable=False)
-    question_id = Column(Integer, ForeignKey("questions.id"), nullable=True)
     question_text = Column(String(1024), nullable=True)
     order = Column(Integer, nullable=False)              # 1, 2, 3...
 
@@ -112,6 +98,10 @@ class InterviewAnswer(Base):
 
     # Composite Score
     content_score = Column(Integer, nullable=True)             # (relevance + star/technical) / 2 − length penalty
+
+    # Video segment timestamps (seconds from interview start, set by WebSocket)
+    video_start_second = Column(Float, nullable=True)  # when question was asked
+    video_end_second   = Column(Float, nullable=True)  # when answer ended
 
     # Feedback
     answer_feedback = Column(String(2000), nullable=True)

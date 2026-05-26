@@ -240,7 +240,12 @@ def _apply_video_nonverbal_to_answers(
     interview: models.Interview,
     answers: List[Any],
 ) -> Optional[dict]:
-    """Run MediaPipe/OpenCV video analysis and set nonverbal fields on each answer row."""
+    """Run MediaPipe/OpenCV video analysis and set nonverbal fields on each answer row.
+
+    If answers have video_start_second / video_end_second timestamps (set by WebSocket),
+    each answer is analyzed against its own video segment. Otherwise falls back to
+    whole-video analysis (legacy behaviour / no timestamps recorded).
+    """
     if not answers:
         return None
 
@@ -252,6 +257,46 @@ def _apply_video_nonverbal_to_answers(
         logger.info("No interview video found for interview_id=%s", interview.id)
         return None
 
+    # Check if per-answer timestamps are available
+    has_timestamps = any(
+        getattr(a, "video_start_second", None) is not None
+        and getattr(a, "video_end_second", None) is not None
+        for a in answers
+    )
+
+    if has_timestamps:
+        logger.info("Per-answer video analysis: interview_id=%s", interview.id)
+        aggregated: dict = {}
+        for answer_row in answers:
+            start = getattr(answer_row, "video_start_second", None)
+            end   = getattr(answer_row, "video_end_second",   None)
+            if start is None or end is None or end <= start:
+                continue
+            try:
+                nv = analyze_interview_video(video_path, start_sec=start, end_sec=end, max_frames=120)
+            except Exception as e:
+                logger.error("Segment video analysis failed for answer order=%s: %s", answer_row.question_order, e)
+                continue
+            if not nv:
+                continue
+            for key in _VIDEO_NONVERBAL_KEYS:
+                val = nv.get(key)
+                if val is not None:
+                    setattr(answer_row, key, int(val))
+                    aggregated.setdefault(key, []).append(val)
+            logger.info(
+                "Segment video applied (order=%s, %.1f-%.1fs, method=%s)",
+                answer_row.question_order, start, end, nv.get("video_analysis_method"),
+            )
+
+        if not aggregated:
+            return None
+        final_nv = {k: int(sum(v) / len(v)) for k, v in aggregated.items()}
+        final_nv["video_analysis_method"] = "mediapipe_per_answer"
+        return final_nv
+
+    # ── Fallback: whole-video analysis (no timestamps) ──
+    logger.info("Whole-video analysis (no timestamps): interview_id=%s", interview.id)
     try:
         nv = analyze_interview_video(video_path)
     except Exception as e:

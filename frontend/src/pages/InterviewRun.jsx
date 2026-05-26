@@ -39,10 +39,7 @@ export default function InterviewRun() {
   const [recording, setRecording] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [aiQuestion, setAiQuestion] = useState('')
-  const [questionNum, setQuestionNum] = useState(0)
-  const [wsConnected, setWsConnected] = useState(false)
   const [micStatus, setMicStatus] = useState('')
-  const [phase, setPhase] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [interviewEnded, setInterviewEnded] = useState(false)
   const [userName, setUserName] = useState('You')
@@ -88,14 +85,10 @@ export default function InterviewRun() {
     fetchInfoError: 'Could not load',
     camDenied: 'Camera and microphone permission denied. Cannot start interview.',
     noVideoSupport: 'Your browser does not support video recording.',
-    greeting: 'AI is greeting you...',
-    listeningDesc: 'AI is listening. Answer and press send.',
-    closing: 'Interview closing phase...',
     completed: 'Interview completed.',
     reading: 'AI is reading...',
     listening: '🔊 Listening...',
     speechDetected: '🎤 Speech detected',
-    tooShort: 'Too short',
     sentThinking: 'Sent, processing...',
     wsError: 'Connection error',
     wsConnError: 'Could not connect to AI',
@@ -113,11 +106,8 @@ export default function InterviewRun() {
     retrying: 'Retrying...',
     reconnectWarning: 'You previously left this interview. If you press start, the interview will restart from the beginning.',
     connecting: 'AI connecting, first question preparing...',
-    questionLabel: 'Question #',
-    aiConnected: '● AI connected',
     thinking: '⏳ AI thinking...',
     sendBtn: '📤 Send',
-    redirecting: 'Redirecting to results page...',
     leaveWarning: 'If you leave the interview, you will need to start over. Are you sure?',
     leaveConfirm: 'Leave Interview',
     leaveCancel: 'Continue',
@@ -167,13 +157,10 @@ export default function InterviewRun() {
 
     const ws = new WebSocket(wsUrl)
     ws.onopen = () => {
-      setWsConnected(true)
       ws.send(
         JSON.stringify({
           type: 'init',
           domain: interview?.domain || 'general',
-          language: 'en',
-          max_questions: 7,
         }),
       )
     }
@@ -182,8 +169,6 @@ export default function InterviewRun() {
         const data = JSON.parse(event.data)
         if (data.type === 'question') {
           setAiQuestion(data.question || '')
-          setQuestionNum(data.q_num || 1)
-          setPhase(data.phase || 'questions')
           setIsProcessing(false)
           isProcessingRef.current = false
           setMicStatus(tRef.current.reading)
@@ -208,7 +193,6 @@ export default function InterviewRun() {
           setMicStatus(tRef.current.completed)
           setIsProcessing(false)
           isProcessingRef.current = false
-          setPhase('closing')
 
           const closingText = data.question || data.message || tRef.current.completed
           if (closingText && !leavingRef.current) {
@@ -234,7 +218,6 @@ export default function InterviewRun() {
       }
     }
     ws.onclose = () => {
-      setWsConnected(false)
       if (!interviewEndedRef.current) {
         reconnectTimerRef.current = setTimeout(() => connectWebSocket(), 3000)
       }
@@ -434,7 +417,6 @@ export default function InterviewRun() {
 
     const recorder = mediaRecorderRef.current
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      try { wsRef.current.send(JSON.stringify({ type: 'end' })) } catch { /* ignore */ }
       try { wsRef.current.close() } catch { /* ignore */ }
     }
 
@@ -467,9 +449,6 @@ export default function InterviewRun() {
 
   const isFailed = interview.status === 'preparation_failed'
   const isInProgress = interview.status === 'in_progress'
-  const isAnalyzing = interview.status === 'analyzing'
-  const isAnalyzed = interview.status === 'analyzed'
-  const isAnalysisFailed = interview.status === 'analysis_failed'
 
   const cardStyle = {
     maxWidth: 420, width: '100%', margin: '0 1.5rem', padding: '2.25rem 2rem',
@@ -487,7 +466,7 @@ export default function InterviewRun() {
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           <p style={{ fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '0.75rem' }}>{t.preparing}</p>
           <h1 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#111', marginBottom: '0.25rem', lineHeight: 1.2 }}>{interview.title}</h1>
-          <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1.5rem' }}>{interview.domain} &middot; {interview.language}</p>
+          <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1.5rem' }}>{interview.domain}</p>
           <p style={{ fontSize: '0.95rem', color: '#4b5563', marginBottom: '1.5rem', lineHeight: 1.6 }}>{t.preparingDesc}</p>
           <div style={{ display: 'flex', justifyContent: 'center' }}>
             <div style={{ width: 32, height: 32, borderRadius: '50%', border: '3px solid #e5e7eb', borderTopColor: '#111', animation: 'spin 0.8s linear infinite' }} />
@@ -503,7 +482,7 @@ export default function InterviewRun() {
         <div style={cardStyle}>
           <p style={{ fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#dc2626', marginBottom: '0.75rem' }}>&#10005;</p>
           <h1 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#111', marginBottom: '0.25rem', lineHeight: 1.2 }}>{interview.title}</h1>
-          <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1.5rem' }}>{interview.domain} &middot; {interview.language}</p>
+          <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1.5rem' }}>{interview.domain}</p>
           <p style={{ fontSize: '0.95rem', color: '#dc2626', marginBottom: '1.5rem', lineHeight: 1.6 }}>{t.preparationFailed}</p>
           {error && <p style={{ color: '#dc2626', fontSize: '0.9rem', marginBottom: '1rem' }}>{error}</p>}
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
@@ -532,7 +511,7 @@ export default function InterviewRun() {
         <div style={cardStyle}>
           <p style={{ fontSize: '0.8rem', letterSpacing: '0.08em', textTransform: 'uppercase', color: '#9ca3af', marginBottom: '0.75rem' }}>{t.ready}</p>
           <h1 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#111', marginBottom: '0.25rem', lineHeight: 1.2 }}>{interview.title}</h1>
-          <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1.5rem' }}>{interview.domain} &middot; {interview.language}</p>
+          <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1.5rem' }}>{interview.domain}</p>
           <p style={{ fontSize: '0.95rem', color: '#4b5563', marginBottom: '1.5rem', lineHeight: 1.6 }}>{t.permissionDesc}</p>
           {isInProgress && (
             <p style={{ fontSize: '0.85rem', color: '#f59e0b', marginBottom: '1rem', lineHeight: 1.5, background: '#fffbeb', padding: '0.75rem', borderRadius: 8 }}>{t.reconnectWarning}</p>
