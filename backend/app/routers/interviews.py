@@ -1,4 +1,3 @@
-import random
 import json
 import logging
 from pathlib import Path
@@ -12,7 +11,7 @@ from starlette.requests import Request
 from ..database import SessionLocal
 from .. import models
 from .auth import get_current_user, get_db
-from .ollama_service import generate_questions, fallback_questions, research_company
+from .ollama_service import research_company
 from ..cv_read import read_cv_plaintext
 from ..analysis import stt
 from .messages import _, get_lang_from_header
@@ -93,9 +92,6 @@ def create_interview(
         domain=payload.domain,
         language=payload.language,
         sector=sec,
-        profile_university=profile.university,
-        profile_department=profile.department,
-        profile_class_year=profile.class_year,
         cv_path=cv_path,
     )
 
@@ -146,9 +142,6 @@ def retry_preparation(
         domain=interview.domain,
         language=interview.language,
         sector=interview.sector or "",
-        profile_university=profile.university if profile else None,
-        profile_department=profile.department if profile else None,
-        profile_class_year=profile.class_year if profile else None,
         cv_path=cv_path,
     )
 
@@ -164,9 +157,6 @@ def _prepare_interview_background(
     domain: str,
     language: str,
     sector: str | None,
-    profile_university: str | None,
-    profile_department: str | None,
-    profile_class_year: str | None,
     cv_path: str | None,
 ):
     """Background task: company research → question generation → ready."""

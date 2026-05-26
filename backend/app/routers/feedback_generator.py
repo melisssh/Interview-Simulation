@@ -17,13 +17,13 @@ class FeedbackGenerator:
         feedback = []
 
         rel_score = metrics.get("relevance_score", 0)
-        if rel_score >= 90:
+        if rel_score >= 80:
             feedback.append("✅ Your answers were directly on point and fully relevant.")
-        elif rel_score >= 80:
-            feedback.append("✅ Good relevance — answers addressed the questions well.")
         elif rel_score >= 70:
+            feedback.append("✅ Good relevance — answers addressed the questions well.")
+        elif rel_score >= 55:
             feedback.append("⚠️ Answers were somewhat relevant but a bit scattered. Try to stay more focused.")
-        elif rel_score >= 60:
+        elif rel_score >= 40:
             feedback.append("❌ You drifted from the question at times. Read each question more carefully.")
         else:
             feedback.append("❌ Answers were largely off-topic. Make sure to address what is actually being asked.")
@@ -38,18 +38,18 @@ class FeedbackGenerator:
 
         star_score = metrics.get("star_structure_score")
         if star_score is not None:
-            if star_score >= 75:
+            if star_score >= 60:
                 feedback.append("✅ Good use of the STAR structure (Situation → Task → Action → Result).")
             else:
                 feedback.append("⚠️ Try to structure answers more clearly using STAR: Situation, Task, Action, Result.")
 
         tech_score = metrics.get("technical_accuracy_score")
         if tech_score is not None and metrics.get("domain") == "technical":
-            if tech_score >= 90:
+            if tech_score >= 70:
                 feedback.append("✅ Technical knowledge was accurate and on point.")
-            elif tech_score >= 75:
-                feedback.append("✅ Good technical knowledge. Some details are worth reviewing further.")
             elif tech_score >= 60:
+                feedback.append("✅ Good technical knowledge. Some details are worth reviewing further.")
+            elif tech_score >= 40:
                 feedback.append("⚠️ Some gaps in technical knowledge were noticeable.")
             else:
                 feedback.append("❌ Technical concepts need more study and practice.")
@@ -117,21 +117,21 @@ class FeedbackGenerator:
         domain = (metrics.get("domain") or "general").lower()
 
         # Content
-        if metrics.get("relevance_score", 0) >= 85:
+        if metrics.get("relevance_score", 0) >= 70:
             strengths.append("Answered questions directly and stayed on topic")
-        if metrics.get("content_score", 0) >= 85:
+        if metrics.get("content_score", 0) >= 70:
             strengths.append("High content quality across answers")
         if metrics.get("answer_length_words", 0) >= 150:
             strengths.append("Answers were detailed and well-developed")
 
         # STAR (general/behavioral)
         star = metrics.get("star_structure_score")
-        if domain != "technical" and star is not None and star >= 75:
+        if domain != "technical" and star is not None and star >= 65:
             strengths.append("Well-structured answers using the STAR method")
 
         # Technical accuracy (technical domain)
         tech = metrics.get("technical_accuracy_score")
-        if domain == "technical" and tech is not None and tech >= 85:
+        if domain == "technical" and tech is not None and tech >= 70:
             strengths.append("Technical knowledge was accurate and on point")
 
         # Speech
@@ -164,13 +164,13 @@ class FeedbackGenerator:
         used = set()
 
         # ── Phase 1: absolute failures ──
-        if relevance < 60:
+        if relevance < 50:
             improvements.append("Focus more on directly answering each question")
             used.add("relevance")
         if domain != "technical" and star is not None and star < 50:
             improvements.append("Structure answers using the STAR method: Situation, Task, Action, Result")
             used.add("star")
-        if domain == "technical" and tech is not None and tech < 65:
+        if domain == "technical" and tech is not None and tech < 50:
             improvements.append("Strengthen technical knowledge — review core concepts for this domain")
             used.add("tech")
         if pause < 70:

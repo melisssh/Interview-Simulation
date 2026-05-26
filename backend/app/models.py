@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float
 from datetime import datetime, timedelta
 
 from .database import Base
@@ -112,6 +112,10 @@ class InterviewAnswer(Base):
 
     # Composite Score
     content_score = Column(Integer, nullable=True)             # (relevance + star/technical) / 2 − length penalty
+
+    # Video segment timestamps (seconds from interview start, set by WebSocket)
+    video_start_second = Column(Float, nullable=True)  # when question was asked
+    video_end_second   = Column(Float, nullable=True)  # when answer ended
 
     # Feedback
     answer_feedback = Column(String(2000), nullable=True)

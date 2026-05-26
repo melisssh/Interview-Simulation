@@ -37,17 +37,10 @@ _POSE_URL = (
 _NOSE_TIP = 1
 _LEFT_EYE_OUTER = 33
 _RIGHT_EYE_OUTER = 263
-_MOUTH_LEFT = 61
-_MOUTH_RIGHT = 291
-_UPPER_LIP = 13
-_LOWER_LIP = 14
-_CHIN = 152
 
 # Pose landmark indices
 _LEFT_SHOULDER = 11
 _RIGHT_SHOULDER = 12
-_LEFT_HIP = 23
-_RIGHT_HIP = 24
 
 
 def resolve_interview_video_path(
@@ -153,19 +146,11 @@ def _opencv_fallback(video_path: str, sample_every: int = 6) -> Dict[str, Any]:
     eye = _clamp_score(centering * 0.7 + detection_rate * 30.0)
     head = _clamp_score(stability)
     posture = _clamp_score(55.0 + detection_rate * 25.0)
-    pos = _clamp_score(30.0 + detection_rate * 35.0)
-    neu = _clamp_score(55.0)
-    neg = _clamp_score(max(10.0, 35.0 - detection_rate * 20.0))
-    conf = _clamp_score((eye + head + posture) / 3.0)
 
     return {
         "eye_contact_score": eye,
         "head_stability_score": head,
         "posture_score": posture,
-        "facial_expression_positive": pos,
-        "facial_expression_neutral": neu,
-        "facial_expression_negative": neg,
-        "confidence_tone_score": conf,
         "video_face_detection_rate": round(detection_rate, 3),
         "video_frames_sampled": sampled,
         "video_analysis_method": "opencv_haar",
@@ -177,6 +162,8 @@ def analyze_interview_video(
     *,
     target_fps: float = 8.0,
     max_frames: int = 480,
+    start_sec: float = 0.0,
+    end_sec: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Analyze full interview video and return nonverbal scores (0–100).
@@ -208,12 +195,14 @@ def analyze_interview_video(
     native_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     sample_every = max(1, int(round(native_fps / max(1.0, target_fps))))
 
+    if start_sec > 0.0:
+        cap.set(cv2.CAP_PROP_POS_MSEC, start_sec * 1000.0)
+
     face_base = mp_python.BaseOptions(model_asset_path=str(face_model_path))
     face_options = vision.FaceLandmarkerOptions(
         base_options=face_base,
         running_mode=vision.RunningMode.VIDEO,
         num_faces=1,
-        output_face_blendshapes=True,
     )
     face_landmarker = vision.FaceLandmarker.create_from_options(face_options)
 
@@ -230,7 +219,6 @@ def analyze_interview_video(
     eye_scores: List[float] = []
     head_jitter: List[float] = []
     posture_scores: List[float] = []
-    smile_scores: List[float] = []
     frame_idx = 0
     processed = 0
     faces_found = 0
@@ -241,6 +229,9 @@ def analyze_interview_video(
         if not ret:
             break
         frame_idx += 1
+        current_sec = start_sec + frame_idx / native_fps
+        if end_sec is not None and current_sec > end_sec:
+            break
         if frame_idx % sample_every != 0:
             continue
         if processed >= max_frames:
@@ -248,7 +239,7 @@ def analyze_interview_video(
 
         rgb = np.ascontiguousarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         h, w = rgb.shape[:2]
-        ts_ms = int((frame_idx / native_fps) * 1000)
+        ts_ms = int(current_sec * 1000)  # absolute video timestamp for MediaPipe
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
         face_result = face_landmarker.detect_for_video(mp_image, ts_ms)
@@ -264,10 +255,6 @@ def analyze_interview_video(
         nose_x, nose_y = _lm_xy(lm, _NOSE_TIP, w, h)
         le_x, _ = _lm_xy(lm, _LEFT_EYE_OUTER, w, h)
         re_x, _ = _lm_xy(lm, _RIGHT_EYE_OUTER, w, h)
-        ml_x, ml_y = _lm_xy(lm, _MOUTH_LEFT, w, h)
-        mr_x, mr_y = _lm_xy(lm, _MOUTH_RIGHT, w, h)
-        ul_x, ul_y = _lm_xy(lm, _UPPER_LIP, w, h)
-        ll_x, ll_y = _lm_xy(lm, _LOWER_LIP, w, h)
 
         eye_mid = (le_x + re_x) / 2.0
         face_w = max(1.0, abs(re_x - le_x))
@@ -282,28 +269,23 @@ def analyze_interview_video(
             head_jitter.append(math.sqrt(dx * dx + dy * dy))
         prev_nose = (nose_x, nose_y)
 
-        mouth_w = math.hypot(mr_x - ml_x, mr_y - ml_y)
-        mouth_open = math.hypot(ll_x - ul_x, ll_y - ul_y)
-        smile_ratio = mouth_w / max(1.0, face_w)
-        openness = mouth_open / max(1.0, face_w * 0.35)
-        smile_scores.append(min(100.0, smile_ratio * 160.0 + max(0.0, 20.0 - openness * 15.0)))
-
         if pose_landmarker is not None:
             pose_result = pose_landmarker.detect_for_video(mp_image, ts_ms)
             if pose_result.pose_landmarks:
                 plm = pose_result.pose_landmarks[0]
                 ls = plm[_LEFT_SHOULDER]
                 rs = plm[_RIGHT_SHOULDER]
-                lh = plm[_LEFT_HIP]
-                rh = plm[_RIGHT_HIP]
-                ls_y, rs_y = ls.y * h, rs.y * h
+                ls_x, ls_y = ls.x * w, ls.y * h
+                rs_x, rs_y = rs.x * w, rs.y * h
                 shoulder_tilt = abs(ls_y - rs_y) / h
                 mid_shoulder_y = (ls_y + rs_y) / 2.0
-                mid_hip_y = ((lh.y + rh.y) / 2.0) * h
-                torso_len = max(1.0, mid_hip_y - mid_shoulder_y)
-                upright = (mid_hip_y - nose_y) / torso_len
+                shoulder_span = max(1.0, abs(rs_x - ls_x))
+                # Head-to-shoulder distance normalized by shoulder width.
+                # Works for seated interviews where hips are not in frame.
+                head_shoulder_dist = max(0.0, mid_shoulder_y - nose_y)
+                upright_ratio = head_shoulder_dist / shoulder_span
                 posture_scores.append(
-                    max(0.0, min(100.0, 75.0 - shoulder_tilt * 250.0 + min(15.0, upright * 5.0)))
+                    max(0.0, min(100.0, 75.0 - shoulder_tilt * 250.0 + min(15.0, upright_ratio * 8.0)))
                 )
 
     cap.release()
@@ -327,24 +309,15 @@ def analyze_interview_video(
         head_score = 60.0
 
     posture_avg = statistics.mean(posture_scores) if posture_scores else 58.0
-    smile_avg = statistics.mean(smile_scores) if smile_scores else 40.0
 
     eye = _clamp_score(eye_avg * 0.85 + detection_rate * 15.0)
     head = _clamp_score(head_score)
     posture = _clamp_score(posture_avg)
-    pos = _clamp_score(smile_avg)
-    neu = _clamp_score(100.0 - abs(pos - 50.0))
-    neg = _clamp_score(max(8.0, 30.0 - (pos - 50.0) * 0.35))
-    conf = _clamp_score((eye * 0.35 + head * 0.35 + posture * 0.30))
 
     return {
         "eye_contact_score": eye,
         "head_stability_score": head,
         "posture_score": posture,
-        "facial_expression_positive": pos,
-        "facial_expression_neutral": neu,
-        "facial_expression_negative": neg,
-        "confidence_tone_score": conf,
         "video_face_detection_rate": round(detection_rate, 3),
         "video_frames_sampled": processed,
         "video_faces_detected": faces_found,
