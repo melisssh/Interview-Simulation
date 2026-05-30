@@ -31,6 +31,10 @@ const inputStyle = {
 }
 
 const labelStyle = { fontSize: '0.9rem', fontWeight: 500, color: '#374151' }
+const DOMAIN_OPTIONS = [
+  { value: 'general', label: 'General' },
+  { value: 'technical', label: 'Technical' },
+]
 
 export default function InterviewNew() {
   const [title, setTitle] = useState('')
@@ -39,7 +43,6 @@ export default function InterviewNew() {
   const [departmentName, setDepartmentName] = useState('')
   const [position, setPosition] = useState('')
   const [sector, setSector] = useState('')
-  const [categories, setCategories] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
@@ -47,16 +50,6 @@ export default function InterviewNew() {
 
   useEffect(() => {
     if (!token) { navigate('/login'); return }
-    fetch(`${API}/categories`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(async (res) => {
-        if (!res.ok) throw new Error('Could not load categories')
-        const data = await res.json()
-        setCategories(Array.isArray(data) ? data : [])
-      })
-      .catch(() => {
-        setCategories([])
-        setError('Could not load categories')
-      })
   }, [token, navigate])
 
   async function handleSubmit(e) {
@@ -113,7 +106,7 @@ export default function InterviewNew() {
               <label style={labelStyle}>Category (domain)</label>
               <select value={domain} onChange={(e) => setDomain(e.target.value)} required style={inputStyle}>
                 <option value="">Select</option>
-                {categories.map((c) => <option key={c.id} value={c.name}>{c.name} – {c.description}</option>)}
+                {DOMAIN_OPTIONS.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
               </select>
             </div>
             <div style={field}>

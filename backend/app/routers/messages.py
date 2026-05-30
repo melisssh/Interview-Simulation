@@ -13,6 +13,7 @@ MSG = {
     "invalid_reset_link": "This password reset link is invalid or expired.",
     "invalid_verification_code": "Invalid verification code.",
     "verification_link_expired": "Verification link has expired.",
+    "verification_link_still_valid": "A verification link was already sent and is still valid. Check your inbox (links expire after 5 minutes).",
     "cv_required": "You must upload a CV before creating an interview.",
     "fields_required": "Company, department, position and sector are required.",
     "interview_not_found": "Interview not found",

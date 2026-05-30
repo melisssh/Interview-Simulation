@@ -28,7 +28,7 @@ SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 if not SECRET_KEY:
     raise RuntimeError("JWT_SECRET_KEY environment variable is not set.")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # 8 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 240
 
 security = HTTPBearer(auto_error=False)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -126,7 +126,10 @@ class CreateUserRequest(BaseModel):
 def create_user(
     payload: CreateUserRequest,
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
+    ip = request.client.host if request and request.client else "unknown"
+    _check_rate_limit(f"create-user:{ip}", max_calls=5, window=60)
     email = (payload.email or "").strip().lower()
     password = payload.password
     if len(password) < 8:
@@ -136,13 +139,14 @@ def create_user(
         raise HTTPException(status_code=400, detail=_("email_exists"))
 
     hashed_pw = hash_password(password)
-    verification_token = uuid4().hex
-    expires_at = datetime.utcnow() + timedelta(minutes=5)
+    dev_auto = os.getenv("DEV_AUTO_VERIFY", "0") in ("1", "true")
+    verification_token = uuid4().hex if not dev_auto else None
+    expires_at = datetime.utcnow() + timedelta(hours=1) if not dev_auto else None
 
     new_user = models.User(
         email=email,
         password=hashed_pw,
-        is_verified=0,
+        is_verified=1 if dev_auto else 0,
         verification_token=verification_token,
         verification_expires_at=expires_at,
     )
@@ -224,7 +228,8 @@ def forgot_password(
     expires_at = datetime.utcnow() + timedelta(hours=1)
 
     db.query(models.PasswordResetToken).filter(
-        models.PasswordResetToken.user_id == user.id
+        (models.PasswordResetToken.user_id == user.id) |
+        (models.PasswordResetToken.expires_at < datetime.utcnow())
     ).delete(synchronize_session=False)
 
     reset_token = models.PasswordResetToken(
@@ -281,7 +286,10 @@ def reset_password(
         raise HTTPException(status_code=400, detail=_("user_not_found"))
 
     user.password = hash_password(new_password)
-    token_row.used = 1
+    # Invalidate all reset tokens for this user after a successful reset.
+    db.query(models.PasswordResetToken).filter(
+        models.PasswordResetToken.user_id == user.id
+    ).delete(synchronize_session=False)
     db.commit()
 
     return {"detail": "Password updated."}
@@ -330,9 +338,15 @@ def resend_verification(
         return {"detail": "If an account with this email exists, a verification link was sent."}
     if user.is_verified:
         return {"detail": "This email is already verified."}
+    if (
+        user.verification_token
+        and user.verification_expires_at
+        and user.verification_expires_at > datetime.utcnow()
+    ):
+        raise HTTPException(status_code=400, detail=_("verification_link_still_valid"))
 
     verification_token = uuid4().hex
-    expires_at = datetime.utcnow() + timedelta(minutes=5)
+    expires_at = datetime.utcnow() + timedelta(hours=1)
     user.verification_token = verification_token
     user.verification_expires_at = expires_at
 
@@ -367,7 +381,7 @@ def login(
     request: Request = None,
 ):
     ip = request.client.host if request and request.client else "unknown"
-    _check_rate_limit(f"login:{ip}", max_calls=10, window=60)
+    _check_rate_limit(f"login:{ip}", max_calls=15, window=60)
     email = (payload.get("email", "") or "").strip().lower()
     password = payload.get("password", "")
     user = db.query(models.User).filter(models.User.email == email).first()

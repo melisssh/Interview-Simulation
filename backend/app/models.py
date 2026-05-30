@@ -33,7 +33,7 @@ class Interview(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     title = Column(String, nullable=False)        # e.g. "Junior Backend Interview"
     domain = Column(String, nullable=False)       # e.g. "technical", "general"
-    language = Column(String, nullable=False)     # e.g. "en", "tr"
+    language = Column(String, nullable=False)     
     status = Column(String, default="created")    # created/preparing/ready/preparation_failed/in_progress/analyzing/analyzed/analysis_failed
     created_at = Column(DateTime, default=datetime.utcnow)
     video_path = Column(String, nullable=True)    # path of uploaded interview video
@@ -43,14 +43,6 @@ class Interview(Base):
     sector = Column(String, nullable=True)
     company_context = Column(String(5000), nullable=True)
     preparation_error = Column(String(2000), nullable=True)
-
-
-class Category(Base):
-    __tablename__ = "categories"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, unique=True)   # "general", "technical"
-    description = Column(String, nullable=True)
 
 
 class InterviewQuestion(Base):
@@ -96,12 +88,12 @@ class InterviewAnswer(Base):
     head_stability_score = Column(Integer, nullable=True)      # 0-100
     posture_score = Column(Integer, nullable=True)             # 0-100
 
+    # Video segment boundaries for per-answer nonverbal analysis
+    video_start_second = Column(Float, nullable=True)
+    video_end_second = Column(Float, nullable=True)
+
     # Composite Score
     content_score = Column(Integer, nullable=True)             # (relevance + star/technical) / 2 − length penalty
-
-    # Video segment timestamps (seconds from interview start, set by WebSocket)
-    video_start_second = Column(Float, nullable=True)  # when question was asked
-    video_end_second   = Column(Float, nullable=True)  # when answer ended
 
     # Feedback
     answer_feedback = Column(String(2000), nullable=True)

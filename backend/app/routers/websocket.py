@@ -3,6 +3,7 @@ import json
 import base64
 import logging
 import tempfile
+import time
 import wave
 from typing import List, Dict
 
@@ -370,11 +371,26 @@ RULES:
 async def websocket_interview(websocket: WebSocket, interview_id: int):
     logger.info("WebSocket handler start: interview_id=%s", interview_id)
 
-    # Token check (from query param)
-    token = websocket.query_params.get("token")
+    await websocket.accept()
+    logger.info("WebSocket accepted: interview_id=%s", interview_id)
+
+    # First frame must be init + token (avoid putting JWT in query string).
+    try:
+        raw_init = await websocket.receive_text()
+        init_data = json.loads(raw_init)
+    except Exception:
+        await websocket.close(code=4001, reason="Init payload required")
+        return
+
+    if init_data.get("type") != "init":
+        await websocket.close(code=4001, reason="Init payload required")
+        return
+
+    token = (init_data.get("token") or "").strip()
     if not token:
         await websocket.close(code=4001, reason="Token required")
         return
+
     try:
         import jwt
         payload = jwt.decode(token, os.getenv("JWT_SECRET_KEY"), algorithms=["HS256"])
@@ -385,9 +401,6 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
     except Exception:
         await websocket.close(code=4001, reason="Invalid token")
         return
-
-    await websocket.accept()
-    logger.info("WebSocket accepted: interview_id=%s", interview_id)
 
     db = SessionLocal()
 
@@ -430,6 +443,9 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
             return
 
         session = InterviewSession(interview, prepared_questions=interview_questions)
+        session.domain = init_data.get("domain", session.domain)
+        session.language = init_data.get("language", session.language)
+        session.answer_count = 0
         logger.info("Session created: domain=%s language=%s", session.domain, session.language)
     except Exception as e:
         logger.error("WebSocket setup error: %s", e, exc_info=True)
@@ -472,9 +488,30 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
     try:
         logger.info("Interview session started: interview_id=%s", interview_id)
 
-        # Video segment tracking: seconds elapsed since interview start
         session_start_time: float | None = None
-        last_q_video_offset: float = 0.0
+        last_q_video_offset = 0.0
+
+        # Clear any previous answers for this interview (in case of reconnection/restart)
+        try:
+            answer_db = SessionLocal()
+            answer_db.query(models.InterviewAnswer).filter(
+                models.InterviewAnswer.interview_id == interview_id
+            ).delete()
+            answer_db.commit()
+            answer_db.close()
+            logger.info("Cleared previous answers for interview %s", interview_id)
+        except Exception as e:
+            logger.warning("Could not clear previous answers: %s", e)
+
+        update_interview_status("in_progress", "ws_init")
+        session_start_time = time.time()
+        last_q_video_offset = 0.0
+        greeting = session.get_greeting()
+        if not await safe_send({
+            "type": "question",
+            "question": greeting,
+        }):
+            return
 
         while True:
             try:
@@ -492,30 +529,8 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
             msg_type = data.get("type")
 
             if msg_type == "init":
-                session.domain = data.get("domain", session.domain)
-                session.language = data.get("language", session.language)
-                session.answer_count = 0
-                # Clear any previous answers for this interview (in case of reconnection/restart)
-                try:
-                    answer_db = SessionLocal()
-                    answer_db.query(models.InterviewAnswer).filter(
-                        models.InterviewAnswer.interview_id == interview_id
-                    ).delete()
-                    answer_db.commit()
-                    answer_db.close()
-                    logger.info(f"Cleared previous answers for interview {interview_id}")
-                except Exception as e:
-                    logger.warning(f"Could not clear previous answers: {e}")
-                update_interview_status("in_progress", "ws_init")
-                session_start_time = time.time()
-                last_q_video_offset = 0.0  # greeting starts at t=0
-
-                greeting = session.get_greeting()
-                if not await safe_send({
-                    "type": "question",
-                    "question": greeting,
-                }):
-                    break
+                # Session already initialized on first frame.
+                continue
 
             elif msg_type == "audio":
                 audio_b64 = data.get("audio")
@@ -543,8 +558,11 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
 
                     logger.info(f"Transcription: {transcript[:100]}...")
 
-                    _now = time.time()
-                    video_end_sec = (_now - session_start_time) if session_start_time is not None else None
+                    video_end_sec = (
+                        time.time() - session_start_time
+                        if session_start_time is not None
+                        else None
+                    )
 
                     db = SessionLocal()
                     try:
@@ -586,7 +604,7 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                         "question": response_text,
                     }):
                         break
-                    # Next answer's video segment starts now
+
                     if session_start_time is not None:
                         last_q_video_offset = time.time() - session_start_time
 
@@ -594,84 +612,6 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
                     logger.error("Audio processing error: %s", e, exc_info=True)
                     if not await safe_send({"type": "error", "message": str(e)}):
                         break
-
-            elif msg_type == "test_answer":
-                transcript = (data.get("text") or "").strip()
-                if not transcript:
-                    transcript = f"Dummy answer {session.answer_count + 1}: Silent test response."
-
-                try:
-                    logger.info(f"Test transcript: {transcript[:100]}...")
-
-                    _now = time.time()
-                    video_end_sec = (_now - session_start_time) if session_start_time is not None else None
-
-                    db = SessionLocal()
-                    try:
-                        current_q_num = session.question_count
-                        question_text = session.last_question_text or interview_questions.get(current_q_num, {}).get("text", f"Question {current_q_num}")
-                        answer_record = models.InterviewAnswer(
-                            interview_id=interview_id,
-                            question_order=current_q_num,
-                            question_text=question_text,
-                            answer_text=transcript,
-                            video_start_second=last_q_video_offset,
-                            video_end_second=video_end_sec,
-                        )
-                        db.add(answer_record)
-                        db.commit()
-                        logger.info(f"Saved test answer {current_q_num} to database")
-                    except Exception as save_error:
-                        logger.error(f"Error saving test answer: {save_error}")
-                    finally:
-                        db.close()
-
-                    response_text, is_ended = session.handle_answer(transcript)
-
-                    if is_ended:
-                        update_interview_status("analyzing", "ws_test_auto_end")
-                        if not await safe_send({
-                            "type": "ended",
-                            "message": _("ws_completed", session.language),
-                            "question": response_text,
-                            "q_num": session.question_count,
-                            "total": session.max_questions,
-                        }):
-                            break
-                        break
-
-                    if not await safe_send({
-                        "type": "question",
-                        "question": response_text,
-                        "transcript": transcript,
-                        "q_num": session.question_count,
-                        "total": session.max_questions,
-                        "phase": session.phase,
-                    }):
-                        break
-                    # Next answer's video segment starts now
-                    if session_start_time is not None:
-                        last_q_video_offset = time.time() - session_start_time
-
-                except Exception as e:
-                    logger.error(f"Test answer processing error: {e}", exc_info=True)
-                    if not await safe_send({"type": "error", "message": str(e)}):
-                        break
-
-            elif msg_type == "end":
-                if session.phase != InterviewSession.PHASE_ENDED:
-                    closing, _ended = session.handle_answer("")
-                    await safe_send({
-                        "type": "ended",
-                        "message": _("ws_ended", session.language),
-                        "question": closing,
-                        "q_num": session.question_count,
-                        "total": session.max_questions,
-                    })
-
-                update_interview_status("analyzing", "ws_user_end")
-
-                break
 
     except WebSocketDisconnect:
         logger.info(f"WS disconnect: {interview_id}")

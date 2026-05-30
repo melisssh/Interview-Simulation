@@ -54,8 +54,17 @@ export default function Register() {
           <p style={{ fontSize: '1rem', color: '#6b7280', marginBottom: '1rem' }}>
             <strong>{email}</strong> We sent a verification link to your address.
           </p>
-          <p style={{ fontSize: '0.95rem', color: '#6b7280', marginBottom: '2rem' }}>
-            Check your inbox and click the link to verify your account.
+          <p style={{ fontSize: '0.95rem', color: '#6b7280', marginBottom: '1rem' }}>
+            Check your inbox and click the link to verify your account. The link is valid for 5 minutes.
+          </p>
+          <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '2rem' }}>
+            Didn&apos;t receive it?{' '}
+            <Link
+              to={`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`}
+              style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 500 }}
+            >
+              Resend verification email
+            </Link>
           </p>
           <Link to="/login" style={{
             display: 'inline-block', padding: '0.75rem 1.5rem', background: '#111', color: '#fff',
