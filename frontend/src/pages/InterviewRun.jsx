@@ -153,13 +153,14 @@ export default function InterviewRun() {
     const token = localStorage.getItem('token')
     const loc = window.location
     const proto = loc.protocol === 'https:' ? 'wss' : 'ws'
-    const wsUrl = `${proto}://${loc.host}/ws/interview/${id}?token=${token}`
+    const wsUrl = `${proto}://${loc.host}/ws/interview/${id}`
 
     const ws = new WebSocket(wsUrl)
     ws.onopen = () => {
       ws.send(
         JSON.stringify({
           type: 'init',
+          token,
           domain: interview?.domain || 'general',
         }),
       )

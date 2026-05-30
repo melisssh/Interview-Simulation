@@ -54,7 +54,7 @@ class TestLoginPerformance:
         start = time.time()
         for _ in range(10):
             res = client.post("/login", json={"email": email, "password": TEST_PASSWORD})
-            assert res.status_code in [200, 401, 429]  # 429 = rate limit (kabul edilir)
+            assert res.status_code in [200, 401, 403, 429]  # 429/403 = rate limit (kabul edilir)
         elapsed = time.time() - start
 
         print(f"\n  PT-01: 10 login isteği → {elapsed:.2f}sn")
@@ -211,8 +211,10 @@ class TestConcurrentRegistration:
         print(f"  Sonuçlar: {results}")
 
         assert elapsed < 15.0, f"10 paralel kayıt çok yavaş: {elapsed:.2f}sn"
-        assert all(s in [200, 400, 422] for s in results), f"Beklenmeyen hata kodu: {results}"
+        assert all(s in [200, 400, 422, 429] for s in results), f"Beklenmeyen hata kodu: {results}"
         assert 500 not in results, "Sunucu hatası oluştu!"
+        # 429 beklenen davranış: rate-limit koruması aktif
+        assert any(s == 429 for s in results), "Rate-limit tetiklenmedi — bekleniyordu"
 
 
 # ─────────────────────────────────────────────

@@ -15,22 +15,6 @@ from .messages import _
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-ALLOWED_INTERVIEW_STATUSES = {
-    "created",
-    "preparing",
-    "ready",
-    "preparation_failed",
-    "in_progress",
-    "analyzing",
-    "analyzed",
-    "analysis_failed",
-}
-
-
-@router.get("/categories")
-def get_categories(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    categories = db.query(models.Category).all()
-    return [{"id": c.id, "name": c.name, "description": c.description} for c in categories]
 
 
 class InterviewCreate(BaseModel):
@@ -247,17 +231,13 @@ def update_interview_status(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
-    if not interview:
-        raise HTTPException(status_code=404, detail=_("interview_not_found"))
-    if interview.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail=_("access_denied"))
-    if payload.status not in ALLOWED_INTERVIEW_STATUSES:
-        raise HTTPException(status_code=400, detail=_("invalid_status"))
-    interview.status = payload.status
-    db.commit()
-    db.refresh(interview)
-    return {"id": interview.id, "status": interview.status}
+    # Status transitions are managed by backend workflows (prep / websocket / analysis).
+    # Keep this endpoint non-operational to prevent client-side workflow tampering.
+    _ = interview_id
+    _ = payload
+    _ = db
+    _ = current_user
+    raise HTTPException(status_code=403, detail="Manual status updates are disabled.")
 
 
 UPLOAD_INTERVIEWS_DIR = Path("uploads") / "interviews"
@@ -309,6 +289,9 @@ async def upload_interview_video(
     except Exception as e:
         logger.warning("STT failed for interview %s: %s", interview_id, e)
 
+    # Persist uploaded video path on interview for direct lookup in analysis.
+    interview.video_path = str(target_path)
+
     # Keep status as "analyzing" — full pipeline (content + Ollama) runs in
     # background so dashboard only shows "Results ready" when everything is done.
     interview.status = "analyzing"
@@ -323,7 +306,6 @@ async def upload_interview_video(
     return {
         "detail": "Video uploaded.",
         "filename": safe_name,
-        "path": str(target_path),
     }
 
 

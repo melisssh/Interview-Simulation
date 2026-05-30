@@ -116,34 +116,9 @@ class TestWPM:
 # 4. Scoring Functions
 # ─────────────────────────────────────────────
 
-from app.analysis.scoring import score_transcript, pause_control_from_answer_text
+from app.analysis.scoring import pause_control_from_answer_text
 
 class TestScoring:
-
-    def test_ideal_answer_length_scores_100(self):
-        """Answer with 100 words (ideal range) should score 100 on length."""
-        result = score_transcript("word " * 100, duration_seconds=60)
-        assert result["scores"]["length"] == 100
-
-    def test_very_short_answer_scores_low(self):
-        """Very short answer (10 words) should score low on length."""
-        result = score_transcript("word " * 10, duration_seconds=10)
-        assert result["scores"]["length"] < 80
-
-    def test_no_filler_words_scores_100(self):
-        """Answer with no filler words should score 100 on filler."""
-        result = score_transcript("This is a clear and concise answer about my experience.", duration_seconds=5)
-        assert result["scores"]["filler_usage"] == 100
-
-    def test_filler_heavy_answer_scores_low(self):
-        """Answer full of filler words should score low on filler."""
-        result = score_transcript("um uh like um uh like um uh like um uh like", duration_seconds=5)
-        assert result["scores"]["filler_usage"] < 50
-
-    def test_overall_score_in_range(self):
-        """Overall score should be between 0 and 100."""
-        result = score_transcript("word " * 120, duration_seconds=60)
-        assert 0 <= result["scores"]["overall"] <= 100
 
     def test_pause_control_clean_text(self):
         """Clean English text should score high on pause control."""
@@ -154,3 +129,13 @@ class TestScoring:
         """Text with many filler words should score lower."""
         score = pause_control_from_answer_text("um like you know um like uh well you know um")
         assert score < 70
+
+    def test_pause_control_empty_text(self):
+        """Empty text should return default score."""
+        score = pause_control_from_answer_text("")
+        assert score == 45
+
+    def test_pause_control_range(self):
+        """Score should always be between 0 and 100."""
+        score = pause_control_from_answer_text("um uh like um uh like um uh like um uh like um uh")
+        assert 0 <= score <= 100

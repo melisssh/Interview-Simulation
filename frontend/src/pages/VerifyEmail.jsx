@@ -13,6 +13,13 @@ export default function VerifyEmail() {
   const [resendError, setResendError] = useState('')
 
   const token = searchParams.get('token')
+  const emailParam = searchParams.get('email')
+
+  useEffect(() => {
+    if (emailParam) {
+      setResendEmail(emailParam.trim().toLowerCase())
+    }
+  }, [emailParam])
 
   useEffect(() => {
     if (!token) {

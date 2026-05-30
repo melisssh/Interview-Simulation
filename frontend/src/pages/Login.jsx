@@ -8,8 +8,13 @@ export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [needsVerification, setNeedsVerification] = useState(false)
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
+
+  const verifyEmailHref = email.trim()
+    ? `/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`
+    : '/verify-email'
 
   useEffect(() => {
     if (localStorage.getItem('token')) {
@@ -20,6 +25,7 @@ export default function Login() {
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
+    setNeedsVerification(false)
     setLoading(true)
     try {
       const res = await fetch(`${API}/login`, {
@@ -31,6 +37,7 @@ export default function Login() {
       if (!res.ok) {
         const detail = data.detail || 'Login failed'
         setError(detail)
+        if (res.status === 403) setNeedsVerification(true)
         return
       }
       localStorage.setItem('token', data.access_token)
@@ -72,6 +79,13 @@ export default function Login() {
           </div>
           <label style={labelStyle}>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required style={inputStyle} /></label>
           {error && <p style={{ color: '#dc2626', margin: 0, fontSize: '0.9rem' }}>{error}</p>}
+          {needsVerification && (
+            <p style={{ margin: 0, fontSize: '0.9rem', color: '#374151' }}>
+              <Link to={verifyEmailHref} style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 500 }}>
+                Resend verification email
+              </Link>
+            </p>
+          )}
           <button type="submit" disabled={loading} className="primary-btn" style={{ width: '100%' }}>{loading ? 'Logging in...' : 'Log in'}</button>
         </form>
         <p style={{ marginTop: '1.5rem', fontSize: '0.95rem', color: '#6b7280' }}>Don&apos;t have an account?{' '}
