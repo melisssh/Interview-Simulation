@@ -5,7 +5,6 @@ Analyzes the content of interview answers across multiple dimensions
 
 import os
 import re
-import json
 import logging
 from difflib import SequenceMatcher
 from typing import Dict, List, Optional
@@ -281,11 +280,10 @@ class ContentAnalyzer:
         question: str,
         answer: str,
         domain: str = "general",
-        language: str = "tr",
     ) -> int:
         dom = (domain or "general").lower()
         if dom == "technical":
-            g = ollama_technical_score_0_100(question, answer, language=language)
+            g = ollama_technical_score_0_100(question, answer)
             if g is not None:
                 logger.info("Technical accuracy from Ollama: %s", g)
                 return g
@@ -297,7 +295,6 @@ class ContentAnalyzer:
         answer: str,
         domain: str = "general",
         is_behavioral: bool = False,
-        language: str = "tr",
     ) -> Dict:
         """
         Comprehensive analysis of a single answer.
@@ -307,7 +304,7 @@ class ContentAnalyzer:
 
         relevance = self.calculate_relevance_score(question, answer)
         star      = self.calculate_star_score(answer)                              if is_behavioral     else None
-        technical = self.estimate_technical_accuracy(question, answer, domain, language=language) if not is_behavioral else None
+        technical = self.estimate_technical_accuracy(question, answer, domain) if not is_behavioral else None
         word_count = len((answer or "").split())
 
         # 2-component average: relevance + (star or technical)
