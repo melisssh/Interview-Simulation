@@ -1,6 +1,6 @@
 """
 Ollama-based personalized interview feedback generator.
-Calls a local Ollama instance to produce specific, answer-aware feedback in Turkish.
+Calls a local Ollama instance to produce specific, answer-aware feedback in English.
 """
 
 import json
@@ -17,14 +17,13 @@ OLLAMA_URL   = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://loca
 OLLAMA_MODEL = os.getenv("OLLAMA_ANALYSIS_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b"))
 
 
-def ollama_technical_score_0_100(question: str, answer: str, language: str = "tr") -> Optional[int]:
+def ollama_technical_score_0_100(question: str, answer: str) -> Optional[int]:
     """
     Ask the local Ollama model to score technical correctness of an answer (0-100).
     Returns an int or None on failure.
     """
-    lang_note = "Turkish" if (language or "tr").lower().startswith("tr") else "English"
     prompt = (
-        f"You are a strict technical interview evaluator. Language context: {lang_note}.\n"
+        f"You are a strict technical interview evaluator. Language context: English.\n"
         f"Question:\n{question[:1500]}\n\n"
         f"Candidate answer:\n{answer[:4000]}\n\n"
         "Rate the technical correctness, depth, and relevance of the answer on a scale 0-100.\n"
@@ -71,7 +70,6 @@ def generate_ollama_feedback(
     questions_answers: list,   # [{"question": str, "answer": str}, ...]
     metrics: dict,
     domain: str = "general",
-    language: str = "tr",
 ) -> str:
     """
     Generate personalized interview feedback using a local Ollama model.

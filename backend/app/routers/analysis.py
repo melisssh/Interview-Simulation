@@ -6,7 +6,6 @@ Handles metrics calculation, content analysis, and feedback generation
 import asyncio
 import json
 import logging
-import time
 from typing import Any, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,7 +34,6 @@ def run_full_analysis(interview_id: int) -> None:
     from ..database import SessionLocal
 
     db = SessionLocal()
-    _analysis_start = time.time()
     try:
         interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
         if not interview:
@@ -111,7 +109,7 @@ def run_full_analysis(interview_id: int) -> None:
 
         feedback_gen    = get_feedback_generator()
         feedback_report = feedback_gen.generate_full_report(
-            interview_data={"domain": interview.domain, "language": interview.language},
+            interview_data={"domain": interview.domain},
             metrics=aggregated_metrics,
         )
 
@@ -120,7 +118,6 @@ def run_full_analysis(interview_id: int) -> None:
             questions_answers=qa_pairs,
             metrics=aggregated_metrics,
             domain=interview.domain or "general",
-            language=interview.language or "en",
         )
 
         feedback = (
@@ -164,9 +161,7 @@ def run_full_analysis(interview_id: int) -> None:
         feedback.overall_recommendation      = feedback_report["recommendation"]
         interview.status                     = "analyzed"
         db.commit()
-        _analysis_elapsed = time.time() - _analysis_start
         logger.info("Background analysis complete for interview_id=%s", interview_id)
-        print(f"[PERF] Rapor üretim süresi (analiz): {_analysis_elapsed:.2f}sn", flush=True)
 
     except Exception as exc:
         logger.error("Background analysis failed for interview_id=%s: %s", interview_id, exc, exc_info=True)
@@ -339,7 +334,6 @@ def apply_content_metrics_to_interview_answers(db: Session, interview: models.In
     all_metrics: List[Any] = []
     row_blobs: List[dict] = []
     is_behavioral = interview.domain == "general"
-    lang = interview.language or "en"
 
     for answer_row in answers:
         try:
@@ -348,7 +342,6 @@ def apply_content_metrics_to_interview_answers(db: Session, interview: models.In
                 answer=answer_row.answer_text or "",
                 domain=interview.domain,
                 is_behavioral=is_behavioral,
-                language=lang,
             )
             answer_row.relevance_score = content_metrics.get("relevance_score", 0)
             answer_row.star_structure_score = content_metrics.get("star_structure_score")
@@ -396,7 +389,6 @@ def get_interview_analysis(
     current_user: models.User = Depends(get_current_user),
 ):
     """Get complete analysis for an interview"""
-    print(f"\n📊 GET /analysis endpoint: interview_id={interview_id}\n")
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
         raise HTTPException(status_code=404, detail="Interview not found")
