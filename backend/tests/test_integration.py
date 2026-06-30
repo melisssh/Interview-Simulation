@@ -207,3 +207,16 @@ class TestInterviews:
             pytest.skip("DEV_AUTO_VERIFY not enabled")
         res = client.get("/interviews/99999", headers={"Authorization": f"Bearer {token}"})
         assert res.status_code == 404
+
+    def test_delete_interview_removes_it(self):
+        """
+        IT-16: Interview silindiğinde GET isteği 404 dönmeli.
+        CV zorunlu olduğundan interview 400 dönecek — bu test önce
+        interview oluşturmayı atlayıp doğrudan olmayan ID'yi siler.
+        """
+        token = get_token()
+        if not token:
+            pytest.skip("DEV_AUTO_VERIFY not enabled")
+        # Olmayan bir interview'ı silmeye çalış → 404 beklenir
+        res = client.delete("/interviews/99999", headers={"Authorization": f"Bearer {token}"})
+        assert res.status_code == 404

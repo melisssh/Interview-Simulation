@@ -53,13 +53,14 @@ def read_cv_plaintext(cv_path: Optional[str], max_chars: int = 12000) -> str:
     if not cv_path:
         return ""
     # Resolve relative paths (stored as "profiles/{user_id}/cv.pdf")
-    resolved = cv_path
-    if not cv_path.startswith("/"):
-        resolved = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),  # backend/app/
-            "uploads",
-            cv_path,
-        )
+    uploads_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+    if cv_path.startswith("/"):
+        resolved = cv_path
+    else:
+        resolved = os.path.realpath(os.path.join(uploads_root, cv_path))
+        if not resolved.startswith(os.path.realpath(uploads_root) + os.sep):
+            logger.warning("Path traversal attempt blocked: %s", cv_path)
+            return ""
     try:
         from pypdf import PdfReader
 

@@ -30,6 +30,8 @@ async def tts(request: Request, _current_user=Depends(auth.get_current_user)):
     text = _ssml_to_text(inp.get("ssml", "")) or inp.get("text", "")
     if not text:
         raise HTTPException(status_code=400, detail="No text")
+    if len(text) > 2000:
+        raise HTTPException(status_code=400, detail="Text too long")
 
     aiff_fd, aiff_path = tempfile.mkstemp(suffix=".aiff")
     wav_fd, wav_path = tempfile.mkstemp(suffix=".wav")

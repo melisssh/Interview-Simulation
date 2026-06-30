@@ -1,4 +1,5 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { useAuth } from '../AuthContext'
 
 const styles = {
   header: {
@@ -31,12 +32,11 @@ const styles = {
 export default function Header({ links }) {
   const navigate = useNavigate()
   const location = useLocation()
-  const isLoggedIn = !!localStorage.getItem('token')
+  const { auth, logout } = useAuth()
+  const isLoggedIn = !!auth
 
   function handleLogout() {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user_id')
-    localStorage.removeItem('email')
+    logout()
     navigate('/login')
   }
 

@@ -11,9 +11,10 @@ A full-stack mock interview platform that conducts real-time voice interviews, a
 3. [Environment Variables](#environment-variables)
 4. [Required Models](#required-models)
 5. [Installation and Setup](#installation-and-setup)
-6. [Running the Services](#running-the-services)
-7. [Minimum Hardware Requirements](#minimum-hardware-requirements)
-8. [Project Structure](#project-structure)
+6. [Running with Docker](#running-with-docker)
+7. [Running the Services](#running-the-services)
+8. [Minimum Hardware Requirements](#minimum-hardware-requirements)
+9. [Project Structure](#project-structure)
 
 ---
 
@@ -136,6 +137,45 @@ Face/pose landmark model files under `backend/app/analysis/models/` are download
 6. Start Ollama, backend, and frontend (see [Running the Services](#running-the-services)).
 
 Database tables are created automatically when the backend starts (`models.Base.metadata.create_all`).
+
+---
+
+## Running with Docker
+
+The easiest way to run the project. Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
+### Steps
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it.
+2. Install [Ollama](https://ollama.com) and pull the required model:
+   ```bash
+   ollama pull llama3.1:8b
+   ```
+3. Set up a PostgreSQL database (e.g. [Supabase](https://supabase.com) free tier) and copy the connection string.
+4. Configure your environment file:
+   ```bash
+   cp backend/.env.example backend/.env
+   ```
+   Fill in `DATABASE_URL`, `JWT_SECRET_KEY`, SMTP settings, and set:
+   ```
+   OLLAMA_BASE_URL=http://host.docker.internal:11434
+   ```
+5. Build and start:
+   ```bash
+   docker compose up --build
+   ```
+
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:8000`
+- Docs: `http://localhost:8000/docs`
+
+> **Note:** On first run, faster-whisper (~150 MB), SentenceTransformer (~90 MB), and MediaPipe models are downloaded automatically. This may take a few minutes before the first interview is ready.
+
+### Stop
+
+```bash
+docker compose down
+```
 
 ---
 

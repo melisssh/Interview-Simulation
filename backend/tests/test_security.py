@@ -217,3 +217,44 @@ class TestInputValidation:
             "password": None,
         })
         assert res.status_code in [401, 422, 429]  # 429 = rate limiter devrede
+
+
+# ─────────────────────────────────────────────
+# WebSocket Token Security
+# ─────────────────────────────────────────────
+
+class TestWebSocketSecurity:
+
+    def test_websocket_rejects_missing_token(self):
+        """
+        ST-WS-01: WebSocket bağlantısında init mesajında token eksikse
+        sunucu bağlantıyı 4001 kodu ile kapatmalı.
+        """
+        with client.websocket_connect("/ws/interview/1") as ws:
+            ws.send_json({"type": "init", "token": "", "domain": "general"})
+            data = ws.receive()
+            # Bağlantı 4001 ile kapanmalı
+            assert data["type"] == "websocket.close"
+            assert data.get("code") == 4001
+
+    def test_websocket_rejects_invalid_token(self):
+        """
+        ST-WS-02: WebSocket bağlantısında geçersiz JWT token gönderildiğinde
+        sunucu bağlantıyı 4001 kodu ile kapatmalı.
+        """
+        with client.websocket_connect("/ws/interview/1") as ws:
+            ws.send_json({"type": "init", "token": "invalid.token.here", "domain": "general"})
+            data = ws.receive()
+            assert data["type"] == "websocket.close"
+            assert data.get("code") == 4001
+
+    def test_websocket_rejects_no_init_message(self):
+        """
+        ST-WS-03: Init mesajı yerine farklı type gönderildiğinde
+        sunucu bağlantıyı 4001 kodu ile kapatmalı.
+        """
+        with client.websocket_connect("/ws/interview/1") as ws:
+            ws.send_json({"type": "audio", "audio": ""})
+            data = ws.receive()
+            assert data["type"] == "websocket.close"
+            assert data.get("code") == 4001

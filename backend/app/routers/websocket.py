@@ -1,3 +1,4 @@
+import asyncio
 import os
 import json
 import base64
@@ -17,6 +18,7 @@ from ..analysis.speech_metrics import (
 from ..database import SessionLocal
 from .. import models
 from .messages import _
+from .ollama_service import _ollama_chat
 
 try:
     from faster_whisper import WhisperModel
@@ -104,23 +106,6 @@ def _transcribe_pcm_b64_with_metrics(audio_b64: str, language: str = "en") -> di
             pass
 
 
-def _ollama_chat(messages: list[dict], model: str | None = None):
-    if not ollama:
-        raise RuntimeError("Ollama python package is not installed")
-
-    target_model = model or os.getenv("OLLAMA_MODEL", "llama3.2:3b")
-    host = (os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST") or "").strip()
-    options = {
-        "temperature": float(os.getenv("OLLAMA_TEMPERATURE", "0.55")),
-        "top_p": float(os.getenv("OLLAMA_TOP_P", "0.9")),
-        "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "300")),
-    }
-
-    if host and hasattr(ollama, "Client"):
-        client = ollama.Client(host=host)
-        return client.chat(model=target_model, messages=messages, options=options)
-    return ollama.chat(model=target_model, messages=messages, options=options)
-
 
 class InterviewSession:
     """State machine for real-time interview flow."""
@@ -131,7 +116,7 @@ class InterviewSession:
 
     def __init__(self, interview, prepared_questions=None):
         self.interview = interview
-        self.domain = interview.domain or "general"
+        self.domain = interview.domain 
         self.language = interview.language or "en"
         self.question_count = 0
         self.answer_count = 0
@@ -156,56 +141,43 @@ class InterviewSession:
         company_name = self.interview.company_name or "the company"
         department_name = self.interview.department_name or "Department"
         position = self.interview.position or "Position"
+        sector = self.interview.sector or "Not specified"
         interview_type = "Technical Interview" if self.domain == "technical" else "General Interview"
 
         extra_context = ""
         if self.company_context:
             extra_context = f"\n\nCOMPANY CONTEXT (reference info for generating questions):\n{self.company_context}"
 
-        if self.domain == "technical":
-            return f"""You are a real technical interviewer at {company_name}.
-You are a technical expert who knows the position and sector well. Focus on assessing the candidate's technical knowledge and experience.
-The interview language is STRICTLY ENGLISH. Do NOT use Turkish.
-
-POSITION:
+        position_block = f"""POSITION:
 - Title: {position}
 - Department: {department_name}
-- Sector: {self.interview.sector or 'Not specified'}
+- Sector: {sector}
 - Type: {interview_type}
-{extra_context}
+{extra_context}"""
 
-RULES:
-1. Ask EXACTLY ONE question per turn.
-2. NATURAL FLOW: Reference what the candidate actually said in this conversation. Do NOT invent facts.
-3. NO OVERPRAISING: Don't use "amazing", "wonderful", "excellent" etc. Be professional and natural.
-4. NO UNNECESSARY ACKNOWLEDGMENT: Don't praise every answer. Move directly to the next question.
-5. STICK TO CONVERSATION: Only refer to things the candidate has actually said in this interview. Never invent technologies, projects, or experiences they didn't mention.
-6. NEVER ASSUME SKILLS: Do NOT assume the candidate knows any specific technology, language, or tool unless they explicitly mentioned it. If unsure, ask first.
-7. OFF-TOPIC REDIRECT: If the candidate's answer is completely unrelated to the question, briefly acknowledge and redirect: ask them to answer the original question or move to the next relevant one.
-8. The candidate is APPLYING to the company, NOT working there. Never say "at your company" as if they work there."""
-
-        else:
-            return f"""You are a real HR interviewer at {company_name}.
-Focus on assessing the candidate's motivation, genuine interest in the role, cultural fit, and overall potential.
-This is NOT a technical exam -- your goal is to understand who they are, what drives them, and how well they'd fit.
-The interview language is STRICTLY ENGLISH. Do NOT use Turkish.
-
-POSITION:
-- Title: {position}
-- Department: {department_name}
-- Sector: {self.interview.sector or 'Not specified'}
-- Type: {interview_type}
-{extra_context}
-
-RULES:
+        common_rules = """RULES:
 1. Ask EXACTLY ONE question per turn.
 2. NATURAL FLOW: Reference what the candidate actually said in this conversation. Do NOT invent facts.
 3. NO OVERPRAISING: Don't use "amazing", "wonderful", "excellent" etc. Be professional and natural.
 4. NO UNNECESSARY ACKNOWLEDGMENT: Don't praise every answer. Move directly to the next question.
 5. STICK TO CONVERSATION: Only refer to things the candidate has actually said in this interview. Never invent experiences they didn't mention.
 6. OFF-TOPIC REDIRECT: If the candidate's answer is completely unrelated to the question, briefly acknowledge and redirect: ask them to answer the original question or move to the next relevant one.
-7. FOCUS: Ask about motivation, interest, why they applied, and cultural fit. NOT technical tools or skills.
-8. The candidate is APPLYING to the company, NOT working there. Never say "at your company" as if they work there."""
+7. The candidate is APPLYING to the company, NOT working there. Never say "at your company" as if they work there."""
+
+        if self.domain == "technical":
+            intro = f"""You are a real technical interviewer at {company_name}.
+You are a technical expert who knows the position and sector well. Focus on assessing the candidate's technical knowledge and experience.
+The interview language is STRICTLY ENGLISH. Do NOT use Turkish."""
+            extra_rules = "\n8. NEVER ASSUME SKILLS: Do NOT assume the candidate knows any specific technology, language, or tool unless they explicitly mentioned it. If unsure, ask first."
+            return f"{intro}\n\n{position_block}\n\n{common_rules}{extra_rules}"
+
+        else:
+            intro = f"""You are a real HR interviewer at {company_name}.
+Focus on assessing the candidate's motivation, genuine interest in the role, cultural fit, and overall potential.
+This is NOT a technical exam -- your goal is to understand who they are, what drives them, and how well they'd fit.
+The interview language is STRICTLY ENGLISH. Do NOT use Turkish."""
+            extra_rules = "\n8. FOCUS: Ask about motivation, interest, why they applied, and cultural fit. NOT technical tools or skills."
+            return f"{intro}\n\n{position_block}\n\n{common_rules}{extra_rules}"
 
     def _ask_ollama(self, prompt: str) -> str | None:
         try:
@@ -215,8 +187,9 @@ RULES:
             messages.append({"role": "user", "content": prompt})
 
             response = _ollama_chat(
-                model=os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
                 messages=messages,
+                temperature=0.55,
+                num_predict=300,
             )
             out = (response.get("message", {}).get("content", "") or "").strip()
             return " ".join(out.split())
@@ -376,8 +349,11 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
 
     # First frame must be init + token (avoid putting JWT in query string).
     try:
-        raw_init = await websocket.receive_text()
+        raw_init = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
         init_data = json.loads(raw_init)
+    except asyncio.TimeoutError:
+        await websocket.close(code=4001, reason="Init timeout")
+        return
     except Exception:
         await websocket.close(code=4001, reason="Init payload required")
         return
@@ -443,10 +419,7 @@ async def websocket_interview(websocket: WebSocket, interview_id: int):
             return
 
         session = InterviewSession(interview, prepared_questions=interview_questions)
-        session.domain = init_data.get("domain", session.domain)
-        session.language = init_data.get("language", session.language)
         session.answer_count = 0
-        logger.info("Session created: domain=%s language=%s", session.domain, session.language)
     except Exception as e:
         logger.error("WebSocket setup error: %s", e, exc_info=True)
         try:

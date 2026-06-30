@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
-
 import { API } from '../api'
 
 export default function Dashboard() {
@@ -11,10 +10,9 @@ export default function Dashboard() {
   const hasPreparingRef = useRef(false)
   const fetchInterviewsRef = useRef(null)
   const navigate = useNavigate()
-  const token = localStorage.getItem('token')
 
   const fetchInterviews = () => {
-    return fetch(`${API}/interviews`, { headers: { Authorization: `Bearer ${token}` } })
+    return fetch(`${API}/interviews`, { credentials: 'include' })
       .then((res) => {
         if (res.status === 401) { navigate('/login'); return null }
         return res.json()
@@ -27,16 +25,12 @@ export default function Dashboard() {
   fetchInterviewsRef.current = fetchInterviews
 
   useEffect(() => {
-    if (!token) {
-      navigate('/login')
-      return
-    }
     fetchInterviews().finally(() => setLoading(false))
-    fetch(`${API}/profile`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API}/profile`, { credentials: 'include' })
       .then((r) => r.json())
       .then((profile) => { if (!profile?.full_name) navigate('/profile') })
       .catch(() => {})
-  }, [token, navigate])
+  }, [navigate])
 
   useEffect(() => {
     hasPreparingRef.current = interviews.some((i) => i.status === 'preparing' || i.status === 'created' || i.status === 'analyzing')
@@ -49,7 +43,6 @@ export default function Dashboard() {
     return () => clearInterval(interval)
   }, [])
 
-  if (!token) return null
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—'
@@ -62,9 +55,7 @@ export default function Dashboard() {
     try {
       const res = await fetch(`${API}/interviews/${id}`, {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        credentials: 'include',
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))

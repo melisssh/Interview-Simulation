@@ -43,6 +43,8 @@ backend/uploads/
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/frontend.log
+*.log
 
 # IDE
 .idea/
@@ -52,3 +54,7 @@ frontend/dist/
 
 # Claude Code (geçici çalışma dosyaları)
 .claude/
+
+# Accidental empty files from npm/vite
+vite
+cse492-frontend@0.0.0

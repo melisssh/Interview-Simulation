@@ -8,11 +8,12 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 from pydantic import BaseModel, EmailStr
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Cookie, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 from starlette.requests import Request
+from typing import Optional
 
 from .messages import _
 
@@ -64,6 +65,27 @@ def get_db():
         db.close()
 
 
+def _create_verification_token() -> tuple[str, datetime]:
+    token = uuid4().hex
+    expires_at = datetime.utcnow() + timedelta(hours=1)
+    return token, expires_at
+
+
+def _build_verification_email(token: str) -> tuple[str, str]:
+    frontend_base = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
+    verify_link = f"{frontend_base}/verify-email?token={token}"
+    subject = "Verify your email address"
+    body = (
+        "Hello,\n\n"
+        "Please verify your email address to complete your Interview Simulation account registration by clicking the link below:\n\n"
+        f"{verify_link}\n\n"
+        "This link is valid for 5 minutes.\n\n"
+        "If you did not create this account, please ignore this email.\n\n"
+        "Interview Simulation"
+    )
+    return subject, body
+
+
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -97,10 +119,15 @@ def send_email(to_email: str, subject: str, body: str):
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
+    access_token: Optional[str] = Cookie(default=None),
 ):
-    if not credentials:
+    token = None
+    if credentials:
+        token = credentials.credentials
+    elif access_token:
+        token = access_token
+    if not token:
         raise HTTPException(status_code=401, detail=_("login_required"))
-    token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("user_id")
@@ -140,8 +167,7 @@ def create_user(
 
     hashed_pw = hash_password(password)
     dev_auto = os.getenv("DEV_AUTO_VERIFY", "0") in ("1", "true")
-    verification_token = uuid4().hex if not dev_auto else None
-    expires_at = datetime.utcnow() + timedelta(hours=1) if not dev_auto else None
+    verification_token, expires_at = _create_verification_token() if not dev_auto else (None, None)
 
     new_user = models.User(
         email=email,
@@ -151,18 +177,7 @@ def create_user(
         verification_expires_at=expires_at,
     )
 
-    frontend_base = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
-    verify_link = f"{frontend_base}/verify-email?token={verification_token}"
-
-    subject = "Verify your email address"
-    body = (
-        "Hello,\n\n"
-        "Please verify your email address to complete your Interview Simulation account registration by clicking the link below:\n\n"
-        f"{verify_link}\n\n"
-        "This link is valid for 5 minutes.\n\n"
-        "If you did not create this account, please ignore this email.\n\n"
-        "Interview Simulation"
-    )
+    subject, body = _build_verification_email(verification_token)
 
     db.add(new_user)
     try:
@@ -265,7 +280,10 @@ def forgot_password(
 def reset_password(
     payload: ResetPasswordRequest,
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
+    ip = request.client.host if request and request.client else "unknown"
+    _check_rate_limit(f"reset:{ip}", max_calls=5, window=60)
     token_str = (payload.token or "").strip()
     new_password = payload.new_password
 
@@ -306,15 +324,11 @@ def verify_email(
 ):
     token_str = (payload.token or "").strip()
     user = db.query(models.User).filter(models.User.verification_token == token_str).first()
-    if not user:
-        raise HTTPException(status_code=400, detail="Invalid verification link.")
-    if user.is_verified:
-        return {"detail": "Email already verified."}
-    if user.verification_expires_at < datetime.utcnow():
+    if not user or user.is_verified:
+        return {"detail": "Email verified. You can now log in."}
+    if user.verification_expires_at and user.verification_expires_at < datetime.utcnow():
         raise HTTPException(status_code=400, detail=_("verification_link_expired"))
     user.is_verified = 1
-    user.verification_token = None
-    user.verification_expires_at = None
     db.commit()
     return {"detail": "Email verified. You can now log in."}
 
@@ -345,23 +359,11 @@ def resend_verification(
     ):
         raise HTTPException(status_code=400, detail=_("verification_link_still_valid"))
 
-    verification_token = uuid4().hex
-    expires_at = datetime.utcnow() + timedelta(hours=1)
+    verification_token, expires_at = _create_verification_token()
     user.verification_token = verification_token
     user.verification_expires_at = expires_at
 
-    frontend_base = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
-    verify_link = f"{frontend_base}/verify-email?token={verification_token}"
-
-    subject = "Verify your email address"
-    body = (
-        "Hello,\n\n"
-        "Please verify your email address to complete your Interview Simulation account registration by clicking the link below:\n\n"
-        f"{verify_link}\n\n"
-        "This link is valid for 5 minutes.\n\n"
-        "If you did not create this account, please ignore this email.\n\n"
-        "Interview Simulation"
-    )
+    subject, body = _build_verification_email(verification_token)
 
     try:
         send_email(to_email=email, subject=subject, body=body)
@@ -374,28 +376,47 @@ def resend_verification(
     return {"detail": "Verification link sent."}
 
 
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
 @router.post("/login")
 def login(
-    payload: dict,
+    payload: LoginRequest,
     db: Session = Depends(get_db),
     request: Request = None,
+    response: Response = None,
 ):
     ip = request.client.host if request and request.client else "unknown"
     _check_rate_limit(f"login:{ip}", max_calls=15, window=60)
-    email = (payload.get("email", "") or "").strip().lower()
-    password = payload.get("password", "")
+    email = (payload.email or "").strip().lower()
+    password = payload.password
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user or not verify_password(password, user.password):
         raise HTTPException(status_code=401, detail=_("invalid_credentials"))
     if not user.is_verified:
         raise HTTPException(status_code=403, detail=_("email_not_verified"))
     token = create_access_token(data={"user_id": user.id})
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
     return {
         "access_token": token,
         "token_type": "bearer",
         "user_id": user.id,
         "email": user.email,
     }
+
+
+@router.post("/logout")
+def logout(response: Response):
+    response.delete_cookie("access_token")
+    return {"detail": "Logged out."}
 
 
 class ProfileUpdate(BaseModel):
@@ -407,7 +428,8 @@ class ProfileUpdate(BaseModel):
 
 @router.get("/me")
 def get_me(current_user: models.User = Depends(get_current_user)):
-    return {"id": current_user.id, "email": current_user.email}
+    token = create_access_token(data={"user_id": current_user.id})
+    return {"id": current_user.id, "email": current_user.email, "access_token": token}
 
 
 @router.get("/profile")
@@ -486,8 +508,7 @@ def upload_profile_cv(
         db.flush()
     user_dir = os.path.join(UPLOAD_DIR, str(current_user.id))
     os.makedirs(user_dir, exist_ok=True)
-    import uuid
-    safe_name = f"{uuid.uuid4().hex}.pdf"
+    safe_name = f"{uuid4().hex}.pdf"
     path = os.path.join(user_dir, safe_name)
     with open(path, "wb") as f:
         f.write(contents)
@@ -498,7 +519,10 @@ def upload_profile_cv(
     # Check CV content (is it a real CV?)
     cv_text = read_cv_plaintext(profile.cv_path, max_chars=12000)
     if not is_valid_cv_text(cv_text):
-        os.remove(path)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
         profile.cv_path = None
         db.commit()
         raise HTTPException(

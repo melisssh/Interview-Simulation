@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-
+import { useAuth } from '../AuthContext'
 import { API } from '../api'
 import TalkingAvatar from '../components/TalkingAvatar'
 const SILENCE_SEND_MS = 1200
 const MIC_RMS_THRESHOLD = 0.002
 const MIN_CHUNKS_TO_SEND = 2
+const TTS_TAIL_MS = 600
 
 function floatChunksToBase64Int16(chunks) {
   const length = chunks.reduce((sum, arr) => sum + arr.length, 0)
@@ -65,7 +66,8 @@ export default function InterviewRun() {
   const reconnectTimerRef = useRef(null)
 
   const navigate = useNavigate()
-  const token = localStorage.getItem('token')
+  const { auth } = useAuth()
+  const token = auth?.token
 
   useEffect(() => {
     if (!recording) return
@@ -114,6 +116,21 @@ export default function InterviewRun() {
   }
   tRef.current = t
 
+  const setMicTrackEnabled = useCallback((enabled) => {
+    if (!streamRef.current) return
+    streamRef.current.getAudioTracks().forEach(track => { track.enabled = enabled })
+  }, [])
+
+  const unblockMicAfterTts = useCallback(() => {
+    setTimeout(() => {
+      if (leavingRef.current || interviewEndedRef.current) return
+      pendingChunksRef.current = []
+      speechBlockedRef.current = false
+      setMicTrackEnabled(true)
+      setMicStatus(tRef.current.listening)
+    }, TTS_TAIL_MS)
+  }, [setMicTrackEnabled])
+
   const stopSpeaking = useCallback(() => {
     if (avatarRef.current) {
       avatarRef.current.stop()
@@ -150,7 +167,6 @@ export default function InterviewRun() {
   }, [])
 
   const connectWebSocket = useCallback(() => {
-    const token = localStorage.getItem('token')
     const loc = window.location
     const proto = loc.protocol === 'https:' ? 'wss' : 'ws'
     const wsUrl = `${proto}://${loc.host}/ws/interview/${id}`
@@ -161,7 +177,6 @@ export default function InterviewRun() {
         JSON.stringify({
           type: 'init',
           token,
-          domain: interview?.domain || 'general',
         }),
       )
     }
@@ -175,14 +190,18 @@ export default function InterviewRun() {
           setMicStatus(tRef.current.reading)
           if (data.question && !leavingRef.current) {
             speechBlockedRef.current = true
+            pendingChunksRef.current = []
+            setMicTrackEnabled(false)
+            if (sendTimerRef.current) {
+              clearTimeout(sendTimerRef.current)
+              sendTimerRef.current = null
+            }
             if (avatarRef.current) {
               avatarRef.current.speak(data.question, () => {
-                speechBlockedRef.current = false
-                setMicStatus(tRef.current.listening)
+                unblockMicAfterTts()
               })
             } else {
-              speechBlockedRef.current = false
-              setMicStatus(tRef.current.listening)
+              unblockMicAfterTts()
             }
           } else if (!leavingRef.current) {
             setMicStatus(tRef.current.listening)
@@ -198,6 +217,8 @@ export default function InterviewRun() {
           const closingText = data.question || data.message || tRef.current.completed
           if (closingText && !leavingRef.current) {
             speechBlockedRef.current = true
+            pendingChunksRef.current = []
+            setMicTrackEnabled(false)
             if (avatarRef.current) {
               avatarRef.current.speak(closingText, () => {
                 speechBlockedRef.current = false
@@ -219,18 +240,18 @@ export default function InterviewRun() {
       }
     }
     ws.onclose = () => {
-      if (!interviewEndedRef.current) {
+      if (!interviewEndedRef.current && !leavingRef.current) {
         reconnectTimerRef.current = setTimeout(() => connectWebSocket(), 3000)
       }
     }
     ws.onerror = () => {
-      if (!interviewEndedRef.current) {
+      if (!interviewEndedRef.current && !leavingRef.current) {
         setError(tRef.current.wsConnError)
         ws.close()
       }
     }
     wsRef.current = ws
-  }, [id, interview?.domain])
+  }, [id, interview?.domain, unblockMicAfterTts, setMicTrackEnabled])
 
   const startAudioCapture = useCallback(() => {
     if (!streamRef.current) return
@@ -276,22 +297,15 @@ export default function InterviewRun() {
   }, [sendPendingAudio])
 
   useEffect(() => {
-    if (!token) return
-    fetch(`${API}/profile`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API}/profile`, { credentials: 'include' })
       .then(r => r.json())
       .then(data => { if (data.full_name) setUserName(data.full_name) })
       .catch(() => {})
-  }, [token])
+  }, [])
 
   useEffect(() => {
-    if (!token) {
-      navigate('/login')
-      return
-    }
     if (!id) return
-    fetch(`${API}/interviews/${id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    fetch(`${API}/interviews/${id}`, { credentials: 'include' })
       .then((res) => {
         if (res.status === 401 || res.status === 403) { navigate('/login'); return null }
         if (!res.ok) throw new Error(t.fetchError)
@@ -300,7 +314,7 @@ export default function InterviewRun() {
       .then((data) => { if (data) setInterview(data) })
       .catch(() => setError(t.fetchInfoError))
       .finally(() => setLoading(false))
-  }, [id, token, navigate])
+  }, [id, navigate])
 
   const isPreparing = interview?.status === 'preparing' || interview?.status === 'created'
 
@@ -310,7 +324,7 @@ export default function InterviewRun() {
     try {
       const res = await fetch(`${API}/interviews/${id}/retry-prep`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
@@ -329,7 +343,7 @@ export default function InterviewRun() {
   useEffect(() => {
     if (!isPreparing || !id) return
     const interval = setInterval(() => {
-      fetch(`${API}/interviews/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${API}/interviews/${id}`, { credentials: 'include' })
         .then((r) => r.json())
         .then((data) => {
           setInterview(data)
@@ -338,7 +352,7 @@ export default function InterviewRun() {
         .catch(() => {})
     }, 3000)
     return () => clearInterval(interval)
-  }, [isPreparing, id, token])
+  }, [isPreparing, id])
 
   useEffect(() => {
     return () => {
@@ -348,14 +362,14 @@ export default function InterviewRun() {
           if (wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.close()
           }
-        } catch (e) { /* ignore */ }
+        } catch { /* ignore */ }
       }
       if (sendTimerRef.current) clearTimeout(sendTimerRef.current)
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         try { mediaRecorderRef.current.stop() } catch { /* ignore */ }
       }
-      if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop())
+      if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop())
       if (processorRef.current) { try { processorRef.current.disconnect() } catch { /* ignore */ } }
       if (sourceRef.current) { try { sourceRef.current.disconnect() } catch { /* ignore */ } }
       if (muteGainRef.current) { try { muteGainRef.current.disconnect() } catch { /* ignore */ } }
@@ -363,7 +377,7 @@ export default function InterviewRun() {
         try { audioContextRef.current.close() } catch { /* ignore */ }
       }
     }
-  }, [])
+  }, [stopSpeaking])
 
   useEffect(() => {
     if (recording && streamRef.current && videoRef.current) {
@@ -381,7 +395,14 @@ export default function InterviewRun() {
   async function handleStart() {
     setError('')
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      })
       streamRef.current = stream
 
       recordedChunksRef.current = []
@@ -436,7 +457,7 @@ export default function InterviewRun() {
       // Upload in background, navigate to dashboard without waiting
       fetch(`${API}/interviews/${id}/video`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
         body: formData,
       }).catch((e) => console.warn('Video upload failed:', e))
     }
@@ -444,7 +465,6 @@ export default function InterviewRun() {
     navigate('/dashboard')
   }
 
-  if (!token) return null
   if (loading) return <div style={{ padding: '2rem' }}>{t.loading}</div>
   if (error || !interview) return <div style={{ padding: '2rem', color: 'red' }}>{error || t.notFound}</div>
 
@@ -615,7 +635,26 @@ export default function InterviewRun() {
             <p style={{ fontSize: '1rem', fontWeight: 500, marginBottom: '1rem' }}>{t.leaveWarning}</p>
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
               <button onClick={() => setShowLeaveModal(false)} style={{ padding: '0.5rem 1.25rem', borderRadius: 8, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer', fontWeight: 500 }}>{t.leaveCancel}</button>
-              <button onClick={() => { leavingRef.current = true; stopSpeaking(); if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop()); if (wsRef.current) { try { wsRef.current.close() } catch {} } if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') { try { mediaRecorderRef.current.stop() } catch {} } if (audioContextRef.current) { try { audioContextRef.current.close() } catch {} } setShowLeaveModal(false); navigate('/dashboard') }} style={{ padding: '0.5rem 1.25rem', borderRadius: 8, border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer', fontWeight: 500 }}>{t.leaveConfirm}</button>
+              <button onClick={() => {
+                leavingRef.current = true
+                stopSpeaking()
+                document.querySelectorAll('audio').forEach(el => { try { el.pause(); el.currentTime = 0; el.src = '' } catch { /* ignore */ } })
+                if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop())
+                if (wsRef.current) {
+                  try {
+                    wsRef.current.onclose = null
+                    wsRef.current.close()
+                  } catch { /* ignore */ }
+                }
+                if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+                  try { mediaRecorderRef.current.stop() } catch { /* ignore */ }
+                }
+                if (audioContextRef.current) {
+                  try { audioContextRef.current.close() } catch { /* ignore */ }
+                }
+                setShowLeaveModal(false)
+                navigate('/dashboard')
+              }} style={{ padding: '0.5rem 1.25rem', borderRadius: 8, border: 'none', background: '#dc2626', color: '#fff', cursor: 'pointer', fontWeight: 500 }}>{t.leaveConfirm}</button>
             </div>
           </div>
         </div>

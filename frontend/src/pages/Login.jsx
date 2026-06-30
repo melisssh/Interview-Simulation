@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import Header from '../components/Header'
-
+import { useAuth } from '../AuthContext'
 import { API } from '../api'
 
 export default function Login() {
@@ -11,16 +11,15 @@ export default function Login() {
   const [needsVerification, setNeedsVerification] = useState(false)
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
+  const { auth, login } = useAuth()
 
   const verifyEmailHref = email.trim()
     ? `/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`
     : '/verify-email'
 
   useEffect(() => {
-    if (localStorage.getItem('token')) {
-      navigate('/dashboard', { replace: true })
-    }
-  }, [navigate])
+    if (auth) navigate('/dashboard', { replace: true })
+  }, [auth, navigate])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -31,6 +30,7 @@ export default function Login() {
       const res = await fetch(`${API}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ email, password }),
       })
       const data = await res.json()
@@ -40,12 +40,8 @@ export default function Login() {
         if (res.status === 403) setNeedsVerification(true)
         return
       }
-      localStorage.setItem('token', data.access_token)
-      localStorage.setItem('user_id', String(data.user_id))
-      localStorage.setItem('email', data.email)
-      const profileRes = await fetch(`${API}/profile`, {
-        headers: { Authorization: `Bearer ${data.access_token}` },
-      })
+      login(data)
+      const profileRes = await fetch(`${API}/profile`, { credentials: 'include' })
       if (!profileRes.ok) {
         navigate('/dashboard')
         return

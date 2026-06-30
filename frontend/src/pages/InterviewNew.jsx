@@ -46,11 +46,6 @@ export default function InterviewNew() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const navigate = useNavigate()
-  const token = localStorage.getItem('token')
-
-  useEffect(() => {
-    if (!token) { navigate('/login'); return }
-  }, [token, navigate])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -71,7 +66,8 @@ export default function InterviewNew() {
     try {
       const res = await fetch(`${API}/interviews`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           title: finalTitle,
           domain,
@@ -87,8 +83,6 @@ export default function InterviewNew() {
     } catch (err) { setError('Connection error') }
     finally { setLoading(false) }
   }
-
-  if (!token) return null
 
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5' }}>

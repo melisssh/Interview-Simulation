@@ -179,8 +179,6 @@ const Shell = ({ children }) => (
 export default function InterviewResult() {
   const { id }   = useParams()
   const navigate = useNavigate()
-  const token    = localStorage.getItem('token')
-
   const [interview, setInterview] = useState(null)
   const [analysis,  setAnalysis]  = useState(null)
   const [loading,   setLoading]   = useState(true)
@@ -214,49 +212,48 @@ export default function InterviewResult() {
 
   /* fetch */
   useEffect(() => {
-    if (!token) { navigate('/login'); return }
     const load = async () => {
       try {
-        const ir = await fetch(`${API}/interviews/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+        const ir = await fetch(`${API}/interviews/${id}`, { credentials: 'include' })
         if (ir.status === 401 || ir.status === 403) { navigate('/login'); return }
         if (!ir.ok) throw new Error('Interview not found')
         const iv = await ir.json()
         if (['created', 'preparing', 'ready', 'in_progress'].includes(iv.status)) { navigate(`/interview/${id}`); return }
         setInterview(iv)
-        const ar = await fetch(`${API}/interviews/${id}/analysis`, { headers: { Authorization: `Bearer ${token}` } })
+        const ar = await fetch(`${API}/interviews/${id}/analysis`, { credentials: 'include' })
         if (ar.ok) setAnalysis(await ar.json())
       } catch (e) { setError(e.message) }
       finally { setLoading(false) }
     }
     load()
-  }, [id, token, navigate])
+  }, [id, navigate])
 
   /* poll */
   useEffect(() => {
-    if (!token || !id || !interview || analysis || interview.status !== 'analyzing') return
+    if (!id || !interview || analysis || interview.status !== 'analyzing') return
     const t = setInterval(async () => {
       try {
         const [ir, ar] = await Promise.all([
-          fetch(`${API}/interviews/${id}`, { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`${API}/interviews/${id}/analysis`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API}/interviews/${id}`, { credentials: 'include' }),
+          fetch(`${API}/interviews/${id}/analysis`, { credentials: 'include' }),
         ])
         if (ir.ok) setInterview(await ir.json())
         if (ar.ok) setAnalysis(await ar.json())
       } catch { /* ignore */ }
     }, 5000)
     return () => clearInterval(t)
-  }, [id, token, interview, analysis])
+  }, [id, interview, analysis])
 
   const startAnalysis = async () => {
     setAnalyzing(true); setError('')
     setInterview(p => p ? { ...p, status: 'analyzing' } : p)
     try {
-      const res  = await fetch(`${API}/interviews/${id}/analyze`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+      const res  = await fetch(`${API}/interviews/${id}/analyze`, { method: 'POST', credentials: 'include' })
       const data = await res.json()
       if (res.ok) {
         const [ar, ir] = await Promise.all([
-          fetch(`${API}/interviews/${id}/analysis`, { headers: { Authorization: `Bearer ${token}` } }),
-          fetch(`${API}/interviews/${id}`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API}/interviews/${id}/analysis`, { credentials: 'include' }),
+          fetch(`${API}/interviews/${id}`, { credentials: 'include' }),
         ])
         if (ar.ok) setAnalysis(await ar.json()); else setAnalysis(null)
         if (ir.ok) setInterview(await ir.json()); else setInterview(p => p ? { ...p, status: 'analyzed' } : p)

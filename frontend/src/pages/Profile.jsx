@@ -112,14 +112,9 @@ export default function Profile() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const navigate = useNavigate()
-  const token = localStorage.getItem('token')
 
   useEffect(() => {
-    if (!token) {
-      navigate('/login')
-      return
-    }
-    fetch(`${API}/profile`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API}/profile`, { credentials: 'include' })
       .then((res) => {
         if (res.status === 401) { navigate('/login'); return }
         return res.json()
@@ -135,7 +130,7 @@ export default function Profile() {
       })
       .catch(() => setError('Failed to load profile'))
       .finally(() => setLoading(false))
-  }, [token, navigate])
+  }, [navigate])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -154,10 +149,8 @@ export default function Profile() {
     try {
       const res = await fetch(`${API}/profile`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           full_name: trimmedFullName,
           university: trimmedUniversity,
@@ -189,7 +182,7 @@ export default function Profile() {
     try {
       const res = await fetch(`${API}/profile/cv`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
         body: formData,
       })
       const data = await res.json()
@@ -206,7 +199,6 @@ export default function Profile() {
     }
   }
 
-  if (!token) return null
   if (loading) return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5' }}>
       <Header />

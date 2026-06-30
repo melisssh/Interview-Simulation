@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import Header from '../components/Header'
-
+import { useAuth } from '../AuthContext'
 import { API } from '../api'
 
 const card = {
@@ -40,10 +40,10 @@ export default function Account() {
   const [pwError, setPwError] = useState('')
   const [pwLoading, setPwLoading] = useState(false)
 
-  const token = localStorage.getItem('token')
-  const email = localStorage.getItem('email') || ''
+  const { auth } = useAuth()
+  const email = auth?.email || ''
 
-  if (!token) return <Navigate to="/login" replace />
+  if (!auth) return <Navigate to="/login" replace />
 
   async function handlePasswordChange(e) {
     e.preventDefault()
@@ -65,10 +65,8 @@ export default function Account() {
     try {
       const res = await fetch(`${API}/change-password`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           current_password: currentPassword,
           new_password: newPassword,

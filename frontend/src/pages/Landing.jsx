@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
+import { useAuth } from '../AuthContext'
 
 const styles = {
   hero: {
@@ -149,12 +150,11 @@ const styles = {
 
 export default function Landing() {
   const navigate = useNavigate()
+  const { auth } = useAuth()
 
   useEffect(() => {
-    if (localStorage.getItem('token')) {
-      navigate('/dashboard', { replace: true })
-    }
-  }, [navigate])
+    if (auth) navigate('/dashboard', { replace: true })
+  }, [auth, navigate])
 
   return (
     <div style={{ minHeight: '100vh', background: '#fff' }}>

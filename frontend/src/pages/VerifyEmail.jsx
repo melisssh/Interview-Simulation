@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import Header from '../components/Header'
 
@@ -21,30 +21,49 @@ export default function VerifyEmail() {
     }
   }, [emailParam])
 
+  const verifyOutcomeRef = useRef(null)
+
   useEffect(() => {
     if (!token) {
       setStatus('idle')
       return
     }
+    const storageKey = `verify-ok:${token}`
+    if (sessionStorage.getItem(storageKey)) {
+      setStatus('success')
+      setMessage('Email verified. You can now log in.')
+      verifyOutcomeRef.current = 'success'
+      return
+    }
+
+    const controller = new AbortController()
     fetch(`${API}/verify-email`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
+      signal: controller.signal,
     })
       .then(async (res) => {
         const data = await res.json().catch(() => ({}))
+        const detail = typeof data.detail === 'string' ? data.detail : ''
         if (res.ok) {
+          verifyOutcomeRef.current = 'success'
+          sessionStorage.setItem(storageKey, '1')
           setStatus('success')
-          setMessage(data.detail || 'Email verified successfully.')
-        } else {
-          setStatus('error')
-          setMessage(data.detail || 'Verification failed.')
+          setMessage(detail || 'Email verified successfully.')
+          return
         }
+        if (verifyOutcomeRef.current === 'success') return
+        setStatus('error')
+        setMessage(detail || 'Verification failed.')
       })
-      .catch(() => {
+      .catch((err) => {
+        if (err?.name === 'AbortError') return
+        if (verifyOutcomeRef.current === 'success') return
         setStatus('error')
         setMessage('Connection error.')
       })
+    return () => controller.abort()
   }, [token])
 
   async function handleResend(e) {

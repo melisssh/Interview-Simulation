@@ -444,7 +444,7 @@ async def analyze_interview(
         await loop.run_in_executor(None, run_full_analysis, interview_id)
     except Exception as e:
         logger.error("analyze endpoint error for interview %s: %s", interview_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Analysis failed. Please try again.")
 
     # Re-read to return fresh status/scores
     db.expire(interview)
