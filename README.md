@@ -248,7 +248,6 @@ The system runs on CPU only. GPU reduces question-generation and transcription l
 │   └── .env.example
 ├── frontend/
 │   └── src/pages/                # Login, Dashboard, InterviewRun, etc.
-├── appendix_a_automated_tests.tex
 └── README.md
 ```
 
@@ -276,4 +275,4 @@ source venv/bin/activate
 pytest tests/ -v
 ```
 
-See project report Appendix A for the full automated test catalog (57 tests).
+57 automated tests covering authentication, interview flow, security, and analysis endpoints.
